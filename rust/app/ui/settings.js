@@ -138,7 +138,8 @@ const pages = {
   general: () => `
     <h1>General</h1><p class="lead">How Glint starts and where it appears.</p>
     <div class="card">
-      ${item('rocket', 'Start with Windows', 'Glint waits quietly in the tray so it opens instantly.', sw('start_with_windows', S.start_with_windows))}
+      ${item('rocket', 'Start with Windows', 'Glint waits quietly in the background so it opens instantly.', sw('start_with_windows', S.start_with_windows))}
+      ${item('layout', 'Show tray icon', 'Off runs Glint fully hidden. You can still reach settings with the gear in the search window, by typing “settings”, or from “Glint Settings” in the Start menu. Type “quit glint” to close it.', sw('show_tray', S.show_tray))}
       ${item('layout', 'Window position', 'Where the search window appears on the screen under your mouse.', seg('position', S.position, [['top', 'Upper third'], ['center', 'Center']]))}
       ${item('props', 'Preview pane', 'Details, thumbnails and text previews next to the results. <kbd>Ctrl</kbd>+<kbd>P</kbd> toggles it.', sw('show_preview', S.show_preview))}
       ${item('download', 'Check for updates', 'Once a day, quietly. You choose when to install.', sw('check_updates', S.check_updates))}

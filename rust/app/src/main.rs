@@ -2,6 +2,7 @@
 //!   Glint.exe                  open the search window (or settings on first run)
 //!   Glint.exe --tray           start in the background (used at sign-in)
 //!   Glint.exe --settings       open settings
+//!   Glint.exe --quit           close the running Glint (handy when the tray icon is hidden)
 //!   Glint.exe --setup          installer: turn on start-with-Windows
 //!   Glint.exe --remove-integration   uninstaller: undo --setup
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -389,6 +390,13 @@ fn handle(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
             if s.content_roots != old.content_roots || s.content_excludes != old.content_excludes || s.content_max_mb != old.content_max_mb {
                 content::restart();
             }
+            if s.show_tray != old.show_tray {
+                if s.show_tray {
+                    let _ = setup_tray(app);
+                } else {
+                    let _ = app.remove_tray_by_id("glint");
+                }
+            }
             if s.blur != old.blur {
                 // the window effect is set when the window is made
                 if let Some(w) = main_window(app) {
@@ -463,6 +471,9 @@ async fn call(app: AppHandle, cmd: String, args: Value) -> Result<Value, String>
 }
 
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    if app.tray_by_id("glint").is_some() {
+        return Ok(());
+    }
     let open = MenuItem::with_id(app, "open", "Open Glint", true, None::<&str>)?;
     let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let rebuild = MenuItem::with_id(app, "rebuild", "Rebuild content index", true, None::<&str>)?;
@@ -470,7 +481,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit_i = MenuItem::with_id(app, "quit", "Quit Glint", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &settings_i, &rebuild, &sep, &quit_i])?;
     let mut b = TrayIconBuilder::with_id("glint")
-        .tooltip("Glint — press the Windows key to search")
+        .tooltip("Glint: press the Windows key to search")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, e| match e.id().as_ref() {
@@ -507,11 +518,16 @@ fn main() {
         return;
     }
     let tray_start = has("--tray");
+    // with another copy running, the single-instance plugin hands it "--quit" and this process
+    // ends; otherwise there is nothing to quit
+    let quit_only = has("--quit");
     let want_settings = has("--settings");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
-            if argv.iter().any(|a| a == "--settings") {
+            if argv.iter().any(|a| a == "--quit") {
+                quit(app);
+            } else if argv.iter().any(|a| a == "--settings") {
                 open_settings(app, "");
             } else if !argv.iter().any(|a| a == "--tray") {
                 show_launcher(app);
@@ -534,6 +550,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![call])
         .setup(move |app| {
             let handle = app.handle().clone();
+            if quit_only {
+                handle.exit(0);
+                return Ok(());
+            }
             let _ = APP.set(handle.clone());
             let s = settings::load();
             hook::apply(&s);
@@ -559,7 +579,9 @@ fn main() {
             });
 
             create_main(&handle)?;
-            setup_tray(&handle)?;
+            if s.show_tray {
+                setup_tray(&handle)?;
+            }
             apps::refresh(true);
             content::start();
 

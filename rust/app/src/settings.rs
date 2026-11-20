@@ -47,6 +47,8 @@ pub struct Settings {
     /// "explorer" or "filepilot": what opens folders from Glint
     pub folder_opener: String,
     pub start_with_windows: bool,
+    /// tray icon; when off Glint runs fully hidden
+    pub show_tray: bool,
     pub check_updates: bool,
     /// "system" | "dark" | "light"
     pub theme: String,
@@ -77,6 +79,7 @@ impl Default for Settings {
             folder_opener: if fp.is_empty() { "explorer".into() } else { "filepilot".into() },
             filepilot_path: fp,
             start_with_windows: true,
+            show_tray: true,
             check_updates: true,
             theme: "system".into(),
             accent: "#7c6cff".into(),
