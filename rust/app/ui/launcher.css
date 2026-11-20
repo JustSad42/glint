@@ -438,3 +438,4 @@ video.pv-media { background: #000; }
 .pw { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text-2); font: 500 12.5px var(--font); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
 .pw:hover { background: var(--hover); color: var(--text); }
 .pw.armed { border-color: var(--danger); color: var(--danger); }
+.shell.start .tabs .tab-hint { display: none; }
