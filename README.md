@@ -36,14 +36,23 @@ settings, a calculator and more, all in one box.
 | `left`, `max`, `center`, `third`, `next monitor` | Move the window you came from |
 | `play`, `pause`, `next`, `prev` | Media controls, plus a "Now playing" card (can be turned off) |
 | `clip invoice` | Search [ClipVault](https://github.com/JustSad42/ClipVault) clipboard history; Enter pastes |
+| `timer 10m tea`, `remind 3pm call`, `remind in 20m stretch` | Timers and reminders with a corner notice (snooze 5/15 min) |
+| `vol spotify 30`, `mute discord`, `audio headphones` | Per-app volume and switching the output device |
+| `biggest`, `biggest ~\Downloads` | What takes the space (folder sizes from the index; Tab looks inside) |
+| `tab youtube`, `bm recipes`, or just words | Open browser tabs (Enter switches to the tab), bookmarks and history from Chrome, Edge, Brave |
+| `dl`, `ss`, `downloads` | Latest download · latest screenshot (Enter copies the image) |
+| a script's name | Your own `.ps1/.bat/.py/.js` from the scripts folder, with arguments |
 
 **Keys:** Enter opens · Ctrl+Enter shows in folder · Shift+Enter runs as admin · → or Ctrl+K for all
 actions (copy path, copy file, open with, terminal here, VS Code, properties, recycle) · Tab switches
 filter · Ctrl+1…9 opens a result · ↑ on an empty box recalls past searches · Ctrl+P toggles the
-preview pane · Ctrl+Shift+P pins an item · → › Add keyword gives it a shortcut word.
+preview pane · Shift+Space opens Quick Look · Ctrl+Shift+P pins an item · → › Set a global shortcut opens anything from anywhere · → › Add keyword gives it a shortcut word.
 
 The preview plays images, video and audio, and shows dimensions, length, the app a file opens
 with, version info for programs, shortcut targets and what's inside zip archives.
+
+Typos are forgiven ("spotfy", "dicord"). Glint can open on the screen with your mouse or always on the main screen, as a
+pop-up or docked like the classic Start menu (pinned apps, All apps, folders, power), with the time and date in view.
 
 **Win+E** can open [File Pilot](https://filepilot.tech) instead of File Explorer.
 

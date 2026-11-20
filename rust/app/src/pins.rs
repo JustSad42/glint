@@ -14,6 +14,9 @@ struct Data {
     /// keyword -> item
     #[serde(default)]
     keywords: BTreeMap<String, Value>,
+    /// global shortcut ("Ctrl+Alt+T") -> item
+    #[serde(default)]
+    hotkeys: BTreeMap<String, Value>,
 }
 
 static DATA: Lazy<Mutex<Data>> = Lazy::new(|| {
@@ -101,11 +104,35 @@ pub fn keyword_hits(q: &str) -> Vec<Value> {
     out.into_iter().map(|(_, v)| v).collect()
 }
 
+pub fn set_hotkey(combo: &str, item: &Value) {
+    let mut d = DATA.lock();
+    let k = key_of(item).to_string();
+    // one shortcut per item, one item per shortcut
+    d.hotkeys.retain(|c, v| key_of(v) != k && c != combo);
+    d.hotkeys.insert(combo.to_string(), item.clone());
+    save(&d);
+}
+
+pub fn remove_hotkey(combo: &str) {
+    let mut d = DATA.lock();
+    d.hotkeys.remove(combo);
+    save(&d);
+}
+
+pub fn hotkeys() -> Vec<(String, Value)> {
+    DATA.lock().hotkeys.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+}
+
+pub fn hotkey_for(key: &str) -> Option<String> {
+    DATA.lock().hotkeys.iter().find(|(_, v)| key_of(v) == key).map(|(c, _)| c.clone())
+}
+
 /// For the settings page.
 pub fn list() -> Value {
     let d = DATA.lock();
     json!({
         "pinned": d.pinned.iter().map(|v| json!({"key": key_of(v), "title": v["title"], "kind": v["kind"]})).collect::<Vec<_>>(),
         "keywords": d.keywords.iter().map(|(k, v)| json!({"keyword": k, "key": key_of(v), "title": v["title"], "kind": v["kind"]})).collect::<Vec<_>>(),
+        "hotkeys": d.hotkeys.iter().map(|(k, v)| json!({"combo": k, "key": key_of(v), "title": v["title"], "kind": v["kind"]})).collect::<Vec<_>>(),
     })
 }

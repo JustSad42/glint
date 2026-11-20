@@ -16,6 +16,11 @@ tauri-build = { version = "2", features = [] }
 glint-core = { path = "../core" }
 tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-single-instance = "2"
+tauri-plugin-global-shortcut = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+webview2-com = "0.39"
+windows-core = "0.61"
+windows-core-62 = { package = "windows-core", version = "0.62" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 once_cell = "1"
@@ -67,4 +72,6 @@ features = [
     "Devices_Radios",
     "Media_Control",
     "Storage_Streams",
+    "Win32_UI_Accessibility",
+    "Win32_Devices_FunctionDiscovery",
 ]

@@ -102,6 +102,9 @@ pub struct VolumeIndex {
     size: Vec<u64>,
     /// bumped by `compact`, which renumbers entries
     pub generation: u64,
+    /// everything on the drive, once `compute_dir_sizes` has run (folders' own `size` holds
+    /// the total of everything inside them)
+    pub root_total: u64,
 }
 
 /// A ranked match, before its path is built.
@@ -129,6 +132,7 @@ impl VolumeIndex {
             mtime: Vec::new(),
             size: Vec::new(),
             generation: 0,
+            root_total: 0,
         }
     }
 
@@ -358,6 +362,62 @@ impl VolumeIndex {
     /// (modified unix seconds, size); mtime 0 means not known yet.
     pub fn meta(&self, i: u32) -> (u32, u64) {
         (self.mtime.get(i as usize).copied().unwrap_or(0), self.size.get(i as usize).copied().unwrap_or(0))
+    }
+
+    /// Add up file sizes into every folder above them. About 50 ms for 1.5M entries.
+    pub fn compute_dir_sizes(&mut self) {
+        let n = self.entries.len();
+        for i in 0..n {
+            if self.entries[i].flags & F_DIR != 0 {
+                self.size[i] = 0;
+            }
+        }
+        let mut root = 0u64;
+        for i in 0..n {
+            let e = self.entries[i];
+            if e.flags & (F_DIR | F_DEAD) != 0 {
+                continue;
+            }
+            let s = self.size[i];
+            if s == 0 {
+                continue;
+            }
+            root += s;
+            let mut j = e.parent;
+            let mut guard = 0;
+            while j != ROOT && guard < 512 {
+                self.size[j as usize] += s;
+                j = self.entries[j as usize].parent;
+                guard += 1;
+            }
+        }
+        self.root_total = root;
+    }
+
+    /// The folder at `path` (`C:\` is the drive root, returned as `ROOT`).
+    pub fn find_dir(&self, path: &str) -> Option<u32> {
+        let want = path.trim_end_matches('\\').to_lowercase();
+        if want.len() <= 2 {
+            return want.starts_with(self.letter.to_ascii_lowercase()).then_some(ROOT);
+        }
+        let last = want.rsplit('\\').next()?.as_bytes().to_vec();
+        (0..self.entries.len() as u32)
+            .find(|&i| self.entries[i as usize].flags & (F_DIR | F_DEAD) == F_DIR && self.lower(i) == last.as_slice() && self.lower_path(i) == want)
+    }
+
+    /// Children of a folder (or `ROOT`), biggest first: (index, size), plus the folder's total.
+    pub fn children_by_size(&self, dir: u32, limit: usize) -> (u64, Vec<(u32, u64)>) {
+        let total = if dir == ROOT { self.root_total } else { self.size[dir as usize] };
+        let mut kids: Vec<(u32, u64)> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.parent == dir && e.flags & F_DEAD == 0)
+            .map(|(i, _)| (i as u32, self.size[i]))
+            .collect();
+        kids.sort_by(|a, b| b.1.cmp(&a.1));
+        kids.truncate(limit);
+        (total, kids)
     }
 
     pub fn index_of(&self, frn: u64) -> Option<u32> {
@@ -756,6 +816,17 @@ mod tests {
         let listings = v.dir_listings();
         assert!(listings.iter().any(|(p, kids)| p == r"C:\Users\Me\Documents" && kids.len() == 2));
         assert!(listings.iter().any(|(p, _)| p == r"C:\"));
+
+        v.compute_dir_sizes();
+        assert_eq!(v.root_total, 5_000_120);
+        let docs = v.find_dir(r"c:\users\me\documents\").unwrap();
+        let (total, kids) = v.children_by_size(docs, 10);
+        assert_eq!(total, 5_000_120);
+        assert_eq!(v.path(kids[0].0), r"C:\Users\Me\Documents\Budget 2024.xlsx");
+        assert_eq!(v.find_dir(r"C:\"), Some(ROOT));
+        let (t, top) = v.children_by_size(ROOT, 5);
+        assert_eq!(t, 5_000_120);
+        assert_eq!(top[0].1, 5_000_120);
     }
 
     #[test]

@@ -143,6 +143,19 @@ pub fn search(q: &str, limit: usize) -> Vec<(i32, Value)> {
 }
 
 /// Build a .bmp file in memory from a PNG, for the clipboard's bitmap format.
+/// Put an image file on the clipboard (PNG directly; other formats via the shell's decoder
+/// aren't supported, so they're copied as a file instead).
+pub fn copy_image(path: &str) -> Result<(), String> {
+    if !path.to_lowercase().ends_with(".png") {
+        return crate::shellops::copy_files(&[path.to_string()]);
+    }
+    let bmp = png_to_bmp(path).ok_or("Couldn't read the image")?;
+    use clipboard_win::Setter;
+    let _clip = clipboard_win::Clipboard::new_attempts(10).map_err(|e| e.to_string())?;
+    clipboard_win::raw::empty().map_err(|e| e.to_string())?;
+    clipboard_win::formats::Bitmap.write_clipboard(&bmp).map_err(|e| e.to_string())
+}
+
 fn png_to_bmp(path: &str) -> Option<Vec<u8>> {
     let dec = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).ok()?));
     let mut dec = dec;

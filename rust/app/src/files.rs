@@ -2,7 +2,7 @@
 //! the content indexer's own file list (your user folder only) when the service isn't running.
 use crate::{content, history, icons, settings};
 use glint_core::pipe::Client;
-use glint_core::proto::{Hit, Request, SearchReply, StatusReply};
+use glint_core::proto::{ChildrenReply, Hit, Request, SearchReply, StatusReply};
 use glint_core::query::{self, Kind};
 use glint_core::PIPE_NAME;
 use once_cell::sync::Lazy;
@@ -43,6 +43,30 @@ pub fn item_meta(path: &str, dir: bool, score: i32, mtime: Option<u32>, size: Op
 fn ask(req: &Request) -> Result<String, String> {
     let line = serde_json::to_string(req).map_err(|e| e.to_string())?;
     CLIENT.lock().call(&line).map_err(|e| e.to_string())
+}
+
+/// What's in a folder, biggest first, from the indexer: (folder total, children).
+pub fn children(path: &str, limit: usize) -> Result<ChildrenReply, String> {
+    let r: ChildrenReply = serde_json::from_str(&ask(&Request::Children { path: path.to_string(), limit })?).map_err(|e| e.to_string())?;
+    match r.error.clone() {
+        Some(e) => Err(e),
+        None => Ok(r),
+    }
+}
+
+pub fn human(n: u64) -> String {
+    let u = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < u.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 || v >= 10.0 {
+        format!("{:.0} {}", v, u[i])
+    } else {
+        format!("{:.1} {}", v, u[i])
+    }
 }
 
 pub fn status() -> Option<StatusReply> {

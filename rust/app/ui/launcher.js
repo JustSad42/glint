@@ -68,8 +68,143 @@ function cycleFilter(dir) {
 
 async function loadSettings() {
   S.settings = await call('settings_get');
-  applyTheme(S.settings);
-  shellEl.classList.toggle('no-preview', !S.settings.show_preview);
+  applyLayout(S.settings);
+}
+
+function applyLayout(s) {
+  applyTheme(s);
+  shellEl.classList.toggle('start', s.layout === 'start');
+  shellEl.classList.toggle('no-preview', !s.show_preview && s.layout !== 'start');
+  $('clock').hidden = !s.show_clock;
+  tickClock();
+}
+
+// ------------------------------------------------------------------ clock
+function tickClock() {
+  const now = new Date();
+  if (S.settings.show_clock) {
+    $('clock').innerHTML = `<b>${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</b><span>${now.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })}</span>`;
+  }
+  const big = document.getElementById('bigClock');
+  if (big) big.innerHTML = `<div class="t">${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div><div class="d">${now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>`;
+  // live timer countdowns
+  resultsEl.querySelectorAll('.sub[data-due]').forEach((el) => (el.textContent = `${countdown(+el.dataset.due)} left · ${el.dataset.rest}`));
+}
+setInterval(tickClock, 1000);
+
+function countdown(due) {
+  const s = Math.max(0, Math.round(due - Date.now() / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`;
+}
+
+// ------------------------------------------------------------------ classic Start menu layout
+async function loadHome() {
+  try { S.home = await call('start_home'); } catch {}
+  if (isStart() && !qEl.value) updatePreview();
+}
+
+function powerAction(id, label, icon, confirm) {
+  return `<button class="pw" data-id="${id}" data-confirm="${confirm ? 1 : 0}" title="${label}">${glyph(icon, 17)}<span>${label}</span></button>`;
+}
+
+function renderStartSide() {
+  const h = S.home || { folders: [], user: S.status?.user || '' };
+  const name = h.user || 'You';
+  previewEl.innerHTML = `
+    <div class="st-side">
+      <div class="st-user"><div class="av">${esc(name.slice(0, 1).toUpperCase())}</div><div><b>${esc(name)}</b><span>${esc(S.status?.indexer?.total ? `${fmtCount(S.status.indexer.total)} files ready to search` : 'Start')}</span></div></div>
+      <div class="st-clock" id="bigClock"></div>
+      <div class="st-links">
+        ${h.folders.map((f, i) => `<button class="st-link" data-f="${i}">${glyph(f.glyph, 17)}<span>${esc(f.title)}</span></button>`).join('')}
+        <div class="st-sep"></div>
+        <button class="st-link" id="stAll">${glyph('grid', 17)}<span>All apps</span><span class="chev">›</span></button>
+        <button class="st-link" id="stSettings">${glyph('gear', 17)}<span>Settings</span></button>
+      </div>
+      <div class="st-power">${powerAction('lock', 'Lock', 'lock')}${powerAction('sleep', 'Sleep', 'moon')}${powerAction('restart', 'Restart', 'restart', true)}${powerAction('shutdown', 'Shut down', 'power', true)}</div>
+    </div>`;
+  tickClock();
+  previewEl.querySelectorAll('.st-link[data-f]').forEach((b) => (b.onclick = () => runAction(h.folders[+b.dataset.f], { mode: 'default' })));
+  $('stAll').onclick = showAllApps;
+  $('stSettings').onclick = () => call('open_settings', {});
+  previewEl.querySelectorAll('.pw').forEach((b) => (b.onclick = async () => {
+    if (b.dataset.confirm === '1' && !b.classList.contains('armed')) {
+      b.classList.add('armed');
+      b.querySelector('span').textContent = 'Click again';
+      setTimeout(() => { b.classList.remove('armed'); renderStartSide(); }, 2500);
+      return;
+    }
+    const r = await call('activate', { item: { kind: 'action', id: b.dataset.id, key: `act:${b.dataset.id}` }, mode: 'default', q: '' }).catch((e) => toast(String(e), true));
+    if (r?.hide) hide();
+  }));
+}
+
+async function showAllApps() {
+  S.allApps = true;
+  const apps = await call('all_apps');
+  const groups = {};
+  for (const a of apps) {
+    const L = /[a-z]/i.test(a.title[0]) ? a.title[0].toUpperCase() : '#';
+    (groups[L] ||= []).push(a);
+  }
+  render({ sections: Object.keys(groups).sort().map((L) => ({ title: L, items: groups[L] })), mode: 'apps', live: true }, '');
+  qEl.focus();
+}
+
+// ------------------------------------------------------------------ Quick Look
+const qlEl = $('ql');
+const QL_IMG = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif'];
+const QL_VID = ['mp4', 'webm', 'mov', 'mkv', 'm4v'];
+const QL_AUD = ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'opus'];
+const QL_TXT = ['txt', 'md', 'json', 'js', 'ts', 'tsx', 'jsx', 'rs', 'py', 'css', 'html', 'xml', 'yml', 'yaml', 'toml', 'ini', 'log', 'csv', 'c', 'cpp', 'h', 'hpp', 'cs', 'java', 'go', 'sh', 'ps1', 'bat', 'cmd', 'sql', 'lua', 'cfg', 'conf', 'env', 'gitignore', 'srt'];
+
+function qlOpen() {
+  const it = S.flat[S.sel];
+  if (!it || !(it.path || it.image)) return;
+  S.ql = true;
+  closeMenu();
+  call('quicklook', { on: true });
+  qlRender(it);
+}
+
+function qlClose() {
+  S.ql = false;
+  qlEl.querySelectorAll('video,audio').forEach((m) => m.pause());
+  qlEl.hidden = true;
+  qlEl.innerHTML = '';
+  call('quicklook', { on: false });
+  qEl.focus();
+}
+
+async function qlRender(it) {
+  if (!it) return;
+  qlEl.querySelectorAll('video,audio').forEach((m) => m.pause());
+  qlEl.hidden = false;
+  const p = it.kind === 'clip' ? it.image : it.path;
+  const ext = (p || '').split('.').pop().toLowerCase();
+  const head = `<div class="ql-head">${glyph('eye', 16)}<b>${esc(it.title)}</b><span class="ql-pos">${S.sel + 1} / ${S.flat.length}</span>
+    <span class="ql-keys"><kbd>←</kbd><kbd>→</kbd> step · <kbd>↵</kbd> open · <kbd>Esc</kbd> close</span></div>`;
+  let body = '<div class="ql-empty">Loading…</div>';
+  qlEl.innerHTML = head + `<div class="ql-body">${body}</div>`;
+  const box = qlEl.querySelector('.ql-body');
+  const key = it.key;
+  if (it.kind === 'clip' && !it.image) body = `<pre class="ql-text">${esc(it.text || '')}</pre>`;
+  else if (!p) body = '<div class="ql-empty">Nothing to show</div>';
+  else if (QL_IMG.includes(ext)) body = `<img class="ql-img" src="${esc(fileSrc(p))}" />`;
+  else if (QL_VID.includes(ext)) body = `<video class="ql-img" src="${esc(fileSrc(p))}" controls autoplay></video>`;
+  else if (QL_AUD.includes(ext)) body = `<div class="ql-audio">${glyph('volume', 64)}<audio src="${esc(fileSrc(p))}" controls autoplay></audio></div>`;
+  else if (ext === 'pdf') body = `<iframe class="ql-frame" src="${esc(fileSrc(p))}"></iframe>`;
+  else if (QL_TXT.includes(ext)) {
+    try { body = `<pre class="ql-text">${esc(await call('read_text', { path: p }))}</pre>`; } catch (e) { body = `<div class="ql-empty">${esc(String(e))}</div>`; }
+  } else {
+    let d = null;
+    try { d = await call('details', { item: it }); } catch {}
+    const kids = d?.children?.length ? `<div class="ql-kids">${d.children.map((c) => `<div>${glyph(c.dir ? 'folder' : 'file', 15)}${esc(c.name)}</div>`).join('')}</div>` : '';
+    const big = d?.thumb ? `<img class="ql-thumb" src="${esc(d.thumb)}" onerror="this.remove()" />` : `<div class="ql-ico">${it.icon ? `<img src="${esc(it.icon)}" />` : glyph(KIND_GLYPH[it.kind] || 'file', 56)}</div>`;
+    const facts = d ? [d.is_dir === false ? fact('Size', fmtSize(d.size)) : d.total ? fact('Size', fmtSize(d.total)) : '', fact('Modified', fmtDate(d.modified)), fact('Opens with', d.opens_with), fact('Where', d.pretty)].join('') : '';
+    body = `<div class="ql-info">${big}<div class="pv-name">${esc(it.title)}</div><div class="pv-facts">${facts}</div>${d?.text ? `<pre class="ql-text small">${esc(d.text)}</pre>` : ''}${kids}</div>`;
+  }
+  if (S.ql && S.flat[S.sel]?.key === key) box.innerHTML = body;
 }
 
 // ------------------------------------------------------------------ search
@@ -120,7 +255,7 @@ function render(r, q) {
 
 function renderMode() {
   const m = $('mode');
-  const label = { command: 'Command', kill: 'End process', web: 'Web search', path: 'Browse', clip: 'Clipboard' }[S.mode];
+  const label = { command: 'Command', kill: 'End process', web: 'Web search', path: 'Browse', clip: 'Clipboard', biggest: 'Disk usage', tabs: 'Open tabs', bookmarks: 'Bookmarks', apps: 'All apps' }[S.mode];
   m.hidden = !label;
   m.textContent = label || '';
 }
@@ -162,9 +297,10 @@ function highlight(text, q) {
   return out;
 }
 
-const KIND_GLYPH = { app: 'app', file: 'file', folder: 'folder', content: 'filetext', window: 'window', process: 'activity', calc: 'calc', web: 'search', url: 'globe', command: 'terminal', action: 'bolt', color: 'palette', hint: 'info', toggle: 'sliders', info: 'info', layout: 'layout', media: 'play', clip: 'clipboard' };
-const KIND_BADGE = { app: 'App', window: 'Window', content: 'Match', action: 'Command', process: 'Process', folder: 'Folder', layout: 'Layout', clip: 'Clip' };
-const PINNABLE = ['app', 'file', 'folder', 'action', 'url', 'layout', 'toggle', 'command'];
+const KIND_GLYPH = { app: 'app', file: 'file', folder: 'folder', content: 'filetext', window: 'window', process: 'activity', calc: 'calc', web: 'search', url: 'globe', command: 'terminal', action: 'bolt', color: 'palette', hint: 'info', toggle: 'sliders', info: 'info', layout: 'layout', media: 'play', clip: 'clipboard', timer: 'clock', tab: 'globe', script: 'terminal' };
+const KIND_BADGE = { app: 'App', window: 'Window', content: 'Match', action: 'Command', process: 'Process', folder: 'Folder', layout: 'Layout', clip: 'Clip', tab: 'Tab', script: 'Script', timer: 'Timer' };
+const PINNABLE = ['app', 'file', 'folder', 'action', 'url', 'layout', 'toggle', 'command', 'script'];
+const isStart = () => S.settings.layout === 'start';
 
 function iconHtml(it) {
   if (it.kind === 'color') return `<div class="ico swatch" style="background:${esc(it.swatch)}"></div>`;
@@ -178,6 +314,10 @@ function goLabel(it) {
   if (it.kind === 'media') return { toggle: it.playing ? 'Pause' : 'Play', next: 'Next', prev: 'Previous' }[it.op] || 'Play';
   if (it.kind === 'info') return it.op === 'public_ip' ? 'Look up' : it.copy ? 'Copy' : '';
   if (it.kind === 'clip') return S.settings.clip_paste === false ? 'Copy' : 'Paste';
+  if (it.kind === 'timer') return it.op === 'cancel' ? 'Cancel' : it.tkind === 'reminder' ? 'Set' : 'Start';
+  if (it.screenshot) return 'Copy';
+  if (it.kind === 'tab') return 'Switch';
+  if (it.kind === 'script') return 'Run';
   return { window: 'Switch', calc: 'Copy', color: 'Copy', process: 'End', web: 'Search', url: 'Open', command: 'Run', action: 'Run', hint: '', toggle: 'Apply', layout: 'Apply' }[it.kind] ?? 'Open';
 }
 
@@ -196,8 +336,9 @@ function mediaCardHtml(it, i) {
 
 function fileMeta(it) {
   if (it.kind !== 'file' && it.kind !== 'folder') return '';
+  if (it.share != null) return '';
   const parts = [];
-  if (it.kind === 'file' && it.size != null) parts.push(fmtSize(it.size));
+  if (it.size != null && (it.kind === 'file' || it.size > 0)) parts.push(fmtSize(it.size));
   if (it.mtime) parts.push(fmtShortDate(it.mtime));
   return parts.length ? `<span class="fmeta">${esc(parts.join(' · '))}</span>` : '';
 }
@@ -207,10 +348,10 @@ function rowHtml(it, i, q) {
   const danger = it.confirm && S.confirmKey === it.key;
   const badge = it.recent ? 'Recent' : KIND_BADGE[it.kind];
   const titleHtml = it.kind === 'calc' ? esc(it.title) : highlight(it.title, q);
-  const sub = danger ? `Press Enter again to confirm` : it.subtitle;
+  const sub = danger ? `Press Enter again to confirm` : it.due && it.op === 'cancel' ? `${countdown(it.due)} left · ${it.subtitle}` : it.subtitle;
   return `<div class="row ${it.kind} ${i === S.sel ? 'sel' : ''} ${danger ? 'danger' : ''}" data-i="${i}">
     ${iconHtml(it)}
-    <div class="txt"><div class="title">${it.pinned ? `<span class="pinmark">${glyph('pin', 12)}</span>` : ''}${titleHtml}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
+    <div class="txt"><div class="title">${it.pinned ? `<span class="pinmark">${glyph('pin', 12)}</span>` : ''}${titleHtml}</div>${sub ? `<div class="sub" ${it.due && it.op === 'cancel' ? `data-due="${it.due}" data-rest="${esc(it.subtitle)}"` : ''}>${esc(sub)}</div>` : ''}${it.share != null ? `<div class="share"><i style="width:${Math.max(1, Math.round(it.share * 100))}%"></i></div>` : ''}</div>
     <div class="meta">
       ${fileMeta(it)}
       ${badge && S.filter === 'all' ? `<span class="badge">${badge}</span>` : ''}
@@ -233,6 +374,8 @@ const TIPS = [
   { q: 'vol ', icon: 'sliders', t1: 'Quick toggles', t2: '<code>vol 40</code> <code>wifi off</code> <code>ip</code>' },
   { q: 'left', icon: 'layout', t1: 'Snap a window', t2: '<code>left</code> <code>center</code> <code>next monitor</code>' },
   { q: 'clip ', icon: 'clipboard', t1: 'Clipboard history', t2: '<code>clip invoice</code> from ClipVault' },
+  { q: 'timer 10m ', icon: 'clock', t1: 'Timers & reminders', t2: '<code>timer 10m tea</code> <code>remind 3pm call</code>' },
+  { q: 'biggest', icon: 'hdd', t1: 'What takes the space', t2: '<code>biggest</code> <code>biggest ~\\Downloads</code>' },
 ];
 
 function renderResults(q) {
@@ -305,7 +448,10 @@ function scrollToSel() {
 // ------------------------------------------------------------------ preview
 let previewTimer = 0;
 function updatePreview() {
-  if (!S.settings.show_preview) return;
+  const home = isStart() && !qEl.value.trim() && !S.allApps;
+  shellEl.classList.toggle('home', home);
+  if (home) return renderStartSide();
+  if (!S.settings.show_preview && !isStart()) return;
   clearTimeout(previewTimer);
   const it = S.flat[S.sel];
   if (!it) {
@@ -411,6 +557,8 @@ function renderPreview(it, d) {
     if (d.archive) facts.push(fact('Contains', `${fmtCount(d.archive.count)} items · ${fmtSize(d.archive.unpacked)} unpacked`));
     if (d.pretty) facts.push(fact('Where', d.pretty));
     if (d.keywords?.length) facts.push(fact('Keyword', d.keywords.join(', ')));
+    if (d.hotkey) facts.push(fact('Shortcut', d.hotkey));
+    if (d.is_dir && d.total) facts.unshift(fact('Size', `${fmtSize(d.total)} inside`));
     if ((it.kind === 'app' || it.kind === 'window' || it.kind === 'process') && d.path) facts.push(fact('Program', prettyPath(d.path)));
     if (facts.join('')) body += `<div class="pv-facts">${facts.join('')}</div>`;
     if (d.snippet?.text) body += `<div class="pv-text pv-snippet">${markText(d.snippet.text, d.snippet.marks)}</div>`;
@@ -434,10 +582,13 @@ const RUNNABLE = ['exe', 'bat', 'cmd', 'ps1', 'msi', 'lnk', 'com'];
 
 function actionsFor(it, d = it.key === S.detailsFor ? S.details : null) {
   const base = baseActions(it);
+  if (it.path && ['file', 'folder', 'content', 'clip'].includes(it.kind) || it.image) base.splice(1, 0, { label: 'Quick Look', icon: 'eye', mode: 'quicklook', keys: ['Shift', 'Space'] });
+  if (it.kind === 'folder') base.splice(2, 0, { label: 'What takes the space', icon: 'hdd', mode: 'biggest', keys: [] });
   if (!PINNABLE.includes(it.kind)) return base;
   const A = (label, icon, mode, keys, extra = {}) => ({ label, icon, mode, keys, ...extra });
   const pinned = d ? d.pinned : it.pinned;
   const extra = [pinned ? A('Unpin', 'pin', 'unpin', ['Ctrl', 'Shift', 'P']) : A('Pin to top', 'pin', 'pin', ['Ctrl', 'Shift', 'P']), A('Add keyword…', 'tag', 'keyword-prompt', [])];
+  extra.push(d?.hotkey ? A(`Remove shortcut ${d.hotkey}`, 'keyboard', 'unhotkey', []) : A('Set a global shortcut…', 'keyboard', 'hotkey-prompt', []));
   for (const w of d?.keywords || []) extra.push(A(`Remove keyword “${w}”`, 'eraser', `unkeyword:${w}`, []));
   // keep the dangerous/forget entries last
   const tail = base.filter((a) => a.danger || a.mode === 'forget');
@@ -461,7 +612,8 @@ function baseActions(it) {
     case 'file':
     case 'content':
       return [
-        A('Open', 'external', 'default', ['↵']),
+        ...(it.screenshot ? [A('Copy image', 'copy', 'copy-image', ['↵'])] : []),
+        A('Open', 'external', 'default', [it.screenshot ? 'Ctrl' : '↵', ...(it.screenshot ? ['↵'] : [])]),
         A('Show in folder', 'folder', 'reveal', ['Ctrl', '↵']),
         A('Copy path', 'copy', 'copy-path', ['Ctrl', 'C']),
         A('Copy file', 'copy', 'copy-file', ['Ctrl', 'Shift', 'C']),
@@ -512,6 +664,12 @@ function baseActions(it) {
       return it.key === 'media:now'
         ? [A(it.playing ? 'Pause' : 'Play', it.playing ? 'pause' : 'play', 'default', ['↵']), A('Next track', 'next', 'media-next', []), A('Previous track', 'prev', 'media-prev', [])]
         : [A(goLabel(it), it.glyph || 'play', 'default', ['↵'])];
+    case 'timer':
+      return it.op ? [A(it.op === 'cancel' ? 'Cancel it' : it.tkind === 'reminder' ? 'Set reminder' : 'Start timer', 'clock', 'default', ['↵'])] : [];
+    case 'tab':
+      return [A('Switch to tab', 'window', 'default', ['↵'])];
+    case 'script':
+      return [A('Run', 'terminal', 'default', ['↵']), A('Run in a terminal', 'terminal', 'admin', ['Shift', '↵'])];
     case 'clip':
       return S.settings.clip_paste === false
         ? [A('Copy to clipboard', 'copy', 'copy', ['↵'])]
@@ -533,6 +691,8 @@ function toast(msg, err = false) {
 async function runAction(it, act) {
   if (!it || !act) return;
   if (act.mode === 'keyword-prompt') return keywordPrompt(it);
+  if (act.mode === 'hotkey-prompt') return hotkeyPrompt(it);
+  if (act.mode === 'quicklook') { closeMenu(); return qlOpen(); }
   if (act.mode === 'media-next' || act.mode === 'media-prev') {
     it = { ...it, op: act.mode.slice(6) };
     act = { mode: 'default' };
@@ -551,6 +711,11 @@ async function runAction(it, act) {
   try {
     const r = await call('activate', { item: it, mode: act.mode, q: qEl.value });
     if (r?.toast) toast(r.toast);
+    if (r?.query) {
+      qEl.value = r.query;
+      search(true);
+      return;
+    }
     if (r?.hide) {
       hide();
     } else if (r?.refresh) {
@@ -569,6 +734,8 @@ function activate(mode = 'default') {
   const it = S.flat[S.sel];
   if (!it) return;
   if (it.kind === 'hint') return;
+  if (it.screenshot && mode === 'default') mode = 'copy-image';
+  if (it.screenshot && mode === 'reveal') mode = 'default';
   const acts = actionsFor(it);
   const act = acts.find((a) => a.mode === mode) || (mode === 'default' ? acts[0] : null);
   if (!act) return;
@@ -602,6 +769,28 @@ function keywordPrompt(it) {
       if (!w) return closeMenu();
       runAction(it, { mode: `keyword:${w}` });
     }
+  };
+}
+
+function hotkeyPrompt(it) {
+  S.menu = { items: [], sel: 0, item: it, input: true };
+  menuEl.hidden = false;
+  menuEl.innerHTML = `<div class="menu-head">Global shortcut for ${esc(it.title)}</div>
+    <div class="kw-box hk" id="hkBox" tabindex="0">${glyph('keyboard', 16)}<span id="hkText">Press the keys, e.g. Ctrl+Alt+T</span></div>
+    <div class="kw-help">Works anywhere, even when Glint is closed. <kbd>Esc</kbd> cancel</div>`;
+  const box = $('hkBox');
+  box.focus();
+  box.onkeydown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') return closeMenu();
+    const mods = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Win'].filter(Boolean);
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) { $('hkText').textContent = mods.join('+') + '+…'; return; }
+    let key = e.code.startsWith('Key') ? e.code.slice(3) : e.code.startsWith('Digit') ? e.code.slice(5) : e.code.replace('Arrow', '');
+    if (/^F\d+$/.test(e.key)) key = e.key;
+    const combo = [...mods, key].join('+');
+    $('hkText').textContent = combo;
+    runAction(it, { mode: `hotkey:${combo}` });
   };
 }
 
@@ -659,7 +848,7 @@ function renderFooter() {
     const second = acts.find((a) => a.mode === 'reveal') || acts.find((a) => a.mode === 'admin');
     if (second && second.keys?.length) hints.push([second.keys.join('+'), second.label.replace('Open file location', 'Location').replace('Show in folder', 'Folder')]);
     if (acts.length > 1) hints.push(['→', 'Actions']);
-    if (S.mode === 'path' && it.complete) hints.unshift(['Tab', 'Complete']);
+    if ((S.mode === 'path' || S.mode === 'biggest') && it.complete) hints.unshift(['Tab', S.mode === 'biggest' ? 'Look inside' : 'Complete']);
   } else hints = [['Esc', 'Close']];
   $('hints').innerHTML = hints.map(([k, l]) => `<span class="hint">${k.split('+').map((x) => `<kbd>${x}</kbd>`).join('')}${esc(l)}</span>`).join('');
 }
@@ -687,6 +876,18 @@ document.addEventListener('keydown', (e) => {
   const k = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
 
+  if (S.ql) {
+    if (k === 'Escape' || k === ' ') { e.preventDefault(); qlClose(); return; }
+    if (k === 'ArrowRight' || k === 'ArrowDown') { e.preventDefault(); updateSel(S.sel + 1); qlRender(S.flat[S.sel]); return; }
+    if (k === 'ArrowLeft' || k === 'ArrowUp') { e.preventDefault(); updateSel(S.sel - 1); qlRender(S.flat[S.sel]); return; }
+    if (k === 'Enter') { e.preventDefault(); qlClose(); activate('default'); return; }
+    return;
+  }
+  if (k === ' ' && e.shiftKey && S.flat[S.sel] && !S.menu) {
+    const it = S.flat[S.sel];
+    if (it.path || it.image) { e.preventDefault(); qlOpen(); return; }
+  }
+  if (S.allApps && k === 'Escape' && !qEl.value) { e.preventDefault(); S.allApps = false; search(true); return; }
   // the action menu has its own keys
   if (S.menu) {
     const m = S.menu;
@@ -726,7 +927,7 @@ document.addEventListener('keydown', (e) => {
   if (k === 'Tab') {
     e.preventDefault();
     const it = S.flat[S.sel];
-    if (S.mode === 'path' && it?.complete && !e.shiftKey) {
+    if ((S.mode === 'path' || S.mode === 'biggest') && it?.complete && !e.shiftKey) {
       qEl.value = it.complete;
       search(true);
       return;
@@ -809,6 +1010,8 @@ document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ------------------------------------------------------------------ show / hide
 listen('launcher-shown', async () => {
+  loadSettings().then(() => { tickClock(); if (isStart()) loadHome(); });
+  S.allApps = false;
   shellEl.classList.remove('again');
   void shellEl.offsetWidth;
   shellEl.classList.add('again');
@@ -827,13 +1030,14 @@ listen('launcher-shown', async () => {
 });
 listen('launcher-hidden', () => {
   previewEl.querySelectorAll('video,audio').forEach((m) => m.pause());
+  if (S.ql) { S.ql = false; qlEl.hidden = true; qlEl.innerHTML = ''; }
   S.hiddenAt = Date.now();
   S.confirmKey = null;
 });
 listen('settings-changed', (s) => {
   S.settings = s;
-  applyTheme(s);
-  shellEl.classList.toggle('no-preview', !s.show_preview);
+  applyLayout(s);
+  if (isStart()) loadHome();
   search(true);
 });
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(S.settings));
@@ -841,6 +1045,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => appl
 (async () => {
   renderTabs();
   await loadSettings();
+  if (isStart()) loadHome();
   refreshStatus().then(renderTabs);
   search(true);
   qEl.focus();

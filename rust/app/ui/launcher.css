@@ -376,3 +376,65 @@ video.pv-media { background: #000; }
 .kw-box { display: flex; align-items: center; gap: 10px; margin: 10px; padding: 0 12px; height: 40px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--sel-line); color: var(--accent); }
 .kw-box input { flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font: 500 14px var(--font); }
 .kw-help { padding: 0 14px 12px; font-size: 11.5px; color: var(--text-3); display: flex; gap: 6px; align-items: center; }
+
+/* ---------------------------------------------------------------- 1.2: clock, share bars, quick look */
+.clock { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; padding: 0 6px; user-select: none; }
+.clock b { font: 600 15px var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.clock span { font-size: 11px; color: var(--text-3); }
+.clock[hidden] { display: none; }
+
+.share { height: 4px; border-radius: 3px; background: var(--panel-2); margin-top: 4px; overflow: hidden; max-width: 360px; }
+.share i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), color-mix(in oklab, var(--accent) 60%, #fff)); }
+
+.ql[hidden] { display: none !important; }
+.ql { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg-solid); animation: pop .14s var(--ease); }
+.ql-head { display: flex; align-items: center; gap: 10px; height: 50px; padding: 0 18px; border-bottom: 1px solid var(--line); flex: none; color: var(--text-2); }
+.ql-head b { color: var(--text); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ql-pos { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.ql-keys { margin-left: auto; font-size: 11.5px; color: var(--text-3); display: flex; gap: 5px; align-items: center; white-space: nowrap; }
+.ql-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
+.ql-img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+.ql-frame { width: 100%; height: 100%; border: 0; border-radius: 8px; background: #fff; }
+.ql-text { align-self: stretch; width: 100%; margin: 0; padding: 16px 18px; font: 12.5px/1.55 var(--mono); color: var(--text-2); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; user-select: text; }
+.ql-text.small { max-height: 220px; }
+.ql-audio { display: flex; flex-direction: column; align-items: center; gap: 22px; color: var(--accent); }
+.ql-audio audio { width: min(520px, 80vw); }
+.ql-empty { color: var(--text-3); }
+.ql-info { width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: 12px; align-self: flex-start; padding-top: 4vh; }
+.ql-info .pv-facts { width: 100%; }
+.ql-thumb { max-width: 100%; max-height: 320px; border-radius: 10px; }
+.ql-ico { width: 96px; height: 96px; display: grid; place-items: center; color: var(--text-2); }
+.ql-ico img { width: 88px; height: 88px; object-fit: contain; }
+.ql-kids { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; font-size: 12.5px; color: var(--text-2); }
+.ql-kids div { display: flex; gap: 8px; align-items: center; padding: 3px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kw-box.hk { color: var(--text-2); cursor: text; outline: none; }
+.kw-box.hk:focus { border-color: var(--accent); }
+.kw-box.hk span { font: 500 14px var(--font); color: var(--text); }
+
+/* ---------------------------------------------------------------- classic Start menu layout */
+.shell.start .body { order: 1; }
+.shell.start .tabs { order: 2; border-top: 1px solid var(--line); padding-top: 8px; }
+.shell.start .bar { order: 3; height: 56px; border-top: 1px solid var(--line); }
+.shell.start .foot { order: 4; }
+.shell.start #q { font-size: 17px; }
+.shell.start .preview { width: 270px; flex: none; }
+.st-side { display: flex; flex-direction: column; gap: 10px; min-height: 100%; }
+.shell.start .preview { overflow-y: auto; padding-top: 14px; padding-bottom: 12px; }
+.shell.start.home .clock { display: none; }
+.st-user { display: flex; align-items: center; gap: 12px; }
+.st-user .av { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font: 650 18px var(--font-display); color: #fff; background: linear-gradient(135deg, var(--accent), color-mix(in oklab, var(--accent) 55%, #000)); box-shadow: 0 4px 14px color-mix(in oklab, var(--accent) 35%, transparent); }
+.st-user b { display: block; font-size: 15px; }
+.st-user span { font-size: 11.5px; color: var(--text-3); }
+.st-clock { padding: 10px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+.st-clock .t { font: 600 30px/1.05 var(--font-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.st-clock .d { font-size: 12.5px; color: var(--text-2); margin-top: 4px; }
+.st-links { display: flex; flex-direction: column; gap: 1px; }
+.st-link { display: flex; align-items: center; gap: 12px; height: 31px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: 500 13.5px var(--font); cursor: pointer; text-align: left; }
+.st-link .glyph { color: var(--text-2); }
+.st-link:hover { background: var(--hover); }
+.st-link .chev { margin-left: auto; color: var(--text-3); font-size: 16px; }
+.st-sep { height: 1px; background: var(--line); margin: 4px 4px; }
+.st-power { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pw { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text-2); font: 500 12.5px var(--font); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
+.pw:hover { background: var(--hover); color: var(--text); }
+.pw.armed { border-color: var(--danger); color: var(--danger); }

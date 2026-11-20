@@ -195,7 +195,8 @@ pub fn search(q: &str, limit: usize) -> Vec<(i32, serde_json::Value)> {
             let mut s = match (fuzzy::score(q, &a.name), by_exe) {
                 (Some(x), Some(y)) => x.max(y),
                 (Some(x), None) | (None, Some(x)) => x,
-                (None, None) => return None,
+                // nothing matched: allow a typo or two ("spotfy")
+                (None, None) => fuzzy::typo(q, &a.name)?,
             };
             let lower = a.name.to_lowercase();
             if MINOR.iter().any(|m| lower.contains(m)) {
@@ -210,6 +211,15 @@ pub fn search(q: &str, limit: usize) -> Vec<(i32, serde_json::Value)> {
     out.sort_by(|a, b| b.0.cmp(&a.0));
     out.truncate(limit);
     out
+}
+
+/// Every app, A to Z (for the Start-menu layout's "All apps").
+pub fn all() -> Vec<serde_json::Value> {
+    let st = STATE.read();
+    let mut v: Vec<&App> = st.apps.iter().filter(|a| !MINOR.iter().any(|m| a.name.to_lowercase().contains(m))).collect();
+    v.sort_by_key(|a| a.name.to_lowercase());
+    v.dedup_by_key(|a| a.name.to_lowercase());
+    v.into_iter().map(|a| to_item(a, 0)).collect()
 }
 
 pub fn count() -> usize {

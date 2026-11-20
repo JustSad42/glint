@@ -153,3 +153,70 @@ mod tests {
         assert!(score("stu vis", "Visual Studio Code").unwrap() >= 780);
     }
 }
+
+/// Damerau–Levenshtein distance (adjacent swaps count as one edit), stopping early past `max`.
+fn edits(a: &[char], b: &[char], max: usize) -> Option<usize> {
+    if a.len().abs_diff(b.len()) > max {
+        return None;
+    }
+    let (n, m) = (a.len(), b.len());
+    let mut d = vec![vec![0usize; m + 1]; n + 1];
+    for i in 0..=n {
+        d[i][0] = i;
+    }
+    for j in 0..=m {
+        d[0][j] = j;
+    }
+    for i in 1..=n {
+        let mut row_min = usize::MAX;
+        for j in 1..=m {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            let mut v = (d[i - 1][j] + 1).min(d[i][j - 1] + 1).min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                v = v.min(d[i - 2][j - 2] + 1);
+            }
+            d[i][j] = v;
+            row_min = row_min.min(v);
+        }
+        if row_min > max {
+            return None;
+        }
+    }
+    (d[n][m] <= max).then_some(d[n][m])
+}
+
+/// A forgiving match for typos ("spotfy", "dicord", "chorme"), used only when `score` finds
+/// nothing. Compares the query with each word of the target, and with that word's start.
+pub fn typo(query: &str, target: &str) -> Option<i32> {
+    let q: Vec<char> = query.trim().to_lowercase().chars().collect();
+    if q.len() < 4 || q.iter().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    let max = if q.len() >= 7 { 2 } else { 1 };
+    let mut best: Option<usize> = None;
+    for (i, w) in words(target).iter().enumerate() {
+        let w: Vec<char> = w.chars().collect();
+        let whole = edits(&q, &w, max);
+        // "spotif" vs "spotify": compare with the word cut to about the query's length
+        let cut = if w.len() > q.len() + 1 { edits(&q, &w[..q.len().min(w.len())], max) } else { None };
+        if let Some(d) = whole.into_iter().chain(cut).min() {
+            let d = d + usize::from(i > 0);
+            best = Some(best.map_or(d, |b| b.min(d)));
+        }
+    }
+    best.map(|d| 560 - d as i32 * 70)
+}
+
+#[cfg(test)]
+mod typo_tests {
+    use super::*;
+    #[test]
+    fn typos() {
+        assert!(typo("spotfy", "Spotify").is_some());
+        assert!(typo("dicord", "Discord").is_some());
+        assert!(typo("chorme", "Google Chrome").is_some());
+        assert!(typo("visula", "Visual Studio Code").is_some());
+        assert!(typo("word", "Discord").is_none());
+        assert!(typo("abc", "abd").is_none());
+    }
+}

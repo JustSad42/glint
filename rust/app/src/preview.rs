@@ -33,7 +33,7 @@ pub fn opens_with(ext: &str) -> Option<String> {
 }
 
 /// FileDescription / CompanyName / ProductVersion of an .exe or .dll.
-fn version_info(path: &str) -> Option<Value> {
+pub fn version_info(path: &str) -> Option<Value> {
     let w = wide(path);
     let size = unsafe { GetFileVersionInfoSizeW(PCWSTR(w.as_ptr()), None) };
     if size == 0 {

@@ -141,9 +141,13 @@ const pages = {
     <div class="card">
       ${item('rocket', 'Start with Windows', 'Glint waits quietly in the background so it opens instantly.', sw('start_with_windows', S.start_with_windows))}
       ${item('layout', 'Show tray icon', 'Off runs Glint fully hidden. You can still reach settings with the gear in the search window, by typing “settings”, or from “Glint Settings” in the Start menu. Type “quit glint” to close it.', sw('show_tray', S.show_tray))}
-      ${item('layout', 'Window position', 'Where the search window appears on the screen under your mouse.', seg('position', S.position, [['top', 'Upper third'], ['center', 'Center']]))}
+      ${item('grid', 'Style', 'Pop-up floats in the middle of the screen. Start menu docks Glint above the taskbar, bottom-left, like the classic Windows Start menu, with your pinned apps, All apps, folders and power buttons.', seg('layout', S.layout, [['popup', 'Pop-up'], ['start', 'Start menu']]))}
+      ${item('monitor', 'Opens on', 'With more than one screen: the one your mouse is on, or always your main screen.', seg('monitor', S.monitor, [['cursor', 'Screen with mouse'], ['primary', 'Main screen']]))}
+      ${item('layout', 'Pop-up position', 'Where the pop-up sits on the screen.', seg('position', S.position, [['top', 'Upper third'], ['center', 'Center']]))}
+      ${item('clock', 'Show time and date', 'In the search bar, always in view when Glint is open.', sw('show_clock', S.show_clock))}
       ${item('props', 'Preview pane', 'Details, thumbnails and text previews next to the results. <kbd>Ctrl</kbd>+<kbd>P</kbd> toggles it.', sw('show_preview', S.show_preview))}
       ${item('download', 'Check for updates', 'Once a day, quietly. You choose when to install.', sw('check_updates', S.check_updates))}
+      ${item('cpu', 'Sleep while hidden', 'Uses less memory while you don’t see it, and wakes instantly.', sw('suspend_hidden', S.suspend_hidden))}
     </div>`,
 
   keyboard: () => `
@@ -169,6 +173,7 @@ const pages = {
       <div>Properties · Open with · Terminal here</div><div><kbd>Alt</kbd><kbd>↵</kbd> · <kbd>Ctrl</kbd><kbd>O</kbd> · <kbd>Ctrl</kbd><kbd>T</kbd></div>
       <div>Move to Recycle Bin</div><div><kbd>Shift</kbd><kbd>Del</kbd> twice</div>
       <div>Toggle preview</div><div><kbd>Ctrl</kbd><kbd>P</kbd></div>
+      <div>Quick Look (big preview, ←→ to step)</div><div><kbd>Shift</kbd><kbd>Space</kbd></div>
       <div>Pin / unpin the selection</div><div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd></div>
       <div>Clipboard clip: copy without pasting</div><div><kbd>Ctrl</kbd><kbd>↵</kbd></div>
     </div>`,
@@ -201,6 +206,11 @@ const pages = {
       <div>Move the window you came from</div><div><code>left</code> · <code>right</code> · <code>max</code> · <code>center</code> · <code>third</code> · <code>next monitor</code></div>
       <div>Media</div><div><code>play</code> · <code>pause</code> · <code>next</code> · <code>prev</code></div>
       <div>Clipboard history (ClipVault)</div><div><code>clip invoice</code> · <code>cb </code></div>
+      <div>Timers and reminders</div><div><code>timer 10m tea</code> · <code>remind 3pm call</code> · <code>remind in 20m stretch</code> · <code>timers</code></div>
+      <div>Per-app volume, output device</div><div><code>vol spotify 30</code> · <code>mute discord</code> · <code>audio headphones</code></div>
+      <div>What takes the space (Tab looks inside)</div><div><code>biggest</code> · <code>biggest ~\\Downloads</code></div>
+      <div>Latest download · screenshot</div><div><code>dl</code> · <code>ss</code> (Enter copies it) · <code>downloads</code></div>
+      <div>Browser</div><div><code>tab youtube</code> · <code>bm recipes</code></div>
     </div>`,
 
   content: () => `
@@ -222,11 +232,18 @@ const pages = {
     <div class="card">
       ${item('play', 'Media controls', 'A “Now playing” card when Glint opens, plus play, pause, next and previous. Works with Spotify, browsers and anything that shows in the Windows media flyout.', sw('media_controls', S.media_controls))}
       ${item('clipboard', 'ClipVault history', status?.clipvault ? 'Search what you copied with <code>clip …</code>, the Clipboard tab, or the top matches in All.' : 'ClipVault wasn\'t found on this PC. Install it to search your clipboard history here.', sw('clipvault', S.clipvault))}
+      ${item('globe', 'Browser tabs and bookmarks', 'Find open tabs (Enter switches to it) and bookmarks from Chrome, Edge and Brave. <code>tab …</code> and <code>bm …</code> search only those.', sw('browser_search', S.browser_search))}
+      ${item('history', 'Browser history', 'Also pages you visited often. Read on this PC only.', sw('browser_history', S.browser_history))}
       ${item('enter', 'Enter pastes the clip', 'Puts it on the clipboard and pastes it into the window you were in. Off just copies it. <kbd>Ctrl</kbd>+<kbd>↵</kbd> always only copies.', sw('clip_paste', S.clip_paste))}
     </div>
     <h2>Pinned</h2>
     <p class="note" style="margin-top:-4px">Pinned items show first when Glint opens and rise to the top of results. Pin anything with <kbd>→</kbd> › Pin, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>.</p>
     <div class="card list" id="pinList"></div>
+    <h2>Global shortcuts</h2>
+    <p class="note" style="margin-top:-4px">Open anything with a key combination, from anywhere. Add one with <kbd>→</kbd> › Set a global shortcut….</p>
+    <div class="card list" id="hkList"></div>
+    <h2>Your scripts</h2>
+    <div class="card">${item('terminal', 'Scripts folder', 'Put .ps1, .bat, .cmd, .py or .js files here and they show up in Glint by name. Words after the name are passed as arguments. Enter runs it hidden and shows the result; Shift+Enter runs it in a terminal.', `<button class="btn" id="openScripts">${glyph('folder', 15)}Open folder</button>`)}</div>
     <h2>Keywords</h2>
     <p class="note" style="margin-top:-4px">Type a keyword and its item comes first. Add one with <kbd>→</kbd> › Add keyword….</p>
     <div class="card list" id="kwList"></div>`,
@@ -376,6 +393,15 @@ async function loadPins() {
     ? d.keywords.map((x) => `<div class="li"><code class="kw">${esc(x.keyword)}</code><span class="p">${esc(x.title)}</span><button class="x" data-word="${esc(x.keyword)}" title="Remove">${glyph('x', 14)}</button></div>`).join('')
     : `<div class="li"><span class="p" style="color:var(--text-3)">No keywords yet.</span></div>`;
   pl.querySelectorAll('.x').forEach((b) => (b.onclick = async () => { await call('unpin', { key: b.dataset.key }); toast('Unpinned'); loadPins(); }));
+  const hl = $('hkList');
+  if (hl) {
+    hl.innerHTML = (d.hotkeys || []).length
+      ? d.hotkeys.map((x) => `<div class="li"><code class="kw">${esc(x.combo)}</code><span class="p">${esc(x.title)}</span><button class="x" data-combo="${esc(x.combo)}" title="Remove">${glyph('x', 14)}</button></div>`).join('')
+      : `<div class="li"><span class="p" style="color:var(--text-3)">No shortcuts yet.</span></div>`;
+    hl.querySelectorAll('.x').forEach((b) => (b.onclick = async () => { await call('hotkey_remove', { combo: b.dataset.combo }); toast('Shortcut removed'); loadPins(); }));
+  }
+  const os = $('openScripts');
+  if (os) os.onclick = () => call('open_scripts');
   kl.querySelectorAll('.x').forEach((b) => (b.onclick = async () => { await call('keyword_remove', { word: b.dataset.word }); toast('Keyword removed'); loadPins(); }));
 }
 

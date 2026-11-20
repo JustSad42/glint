@@ -10,6 +10,21 @@ pub enum Request {
         query: Query,
     },
     Status,
+    /// what's inside a folder, biggest first (folder sizes include everything below them)
+    Children {
+        path: String,
+        #[serde(default)]
+        limit: usize,
+    },
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ChildrenReply {
+    /// the folder's own total; None until sizes are known
+    pub total: Option<u64>,
+    pub items: Vec<Hit>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

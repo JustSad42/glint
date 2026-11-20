@@ -72,6 +72,18 @@ pub struct Settings {
     pub clipvault: bool,
     /// Enter on a clip pastes it into the window you came from (not just copies it)
     pub clip_paste: bool,
+    /// which screen Glint opens on: "cursor" (the one under the mouse) or "primary"
+    pub monitor: String,
+    /// "popup" (floating search) or "start" (docked above the taskbar like the classic Start menu)
+    pub layout: String,
+    /// time and date in the search bar
+    pub show_clock: bool,
+    /// search browser bookmarks and open tabs
+    pub browser_search: bool,
+    /// ...and browser history
+    pub browser_history: bool,
+    /// put the search window's web view to sleep while it's hidden (less memory)
+    pub suspend_hidden: bool,
     pub first_run_done: bool,
 }
 
@@ -102,6 +114,12 @@ impl Default for Settings {
             media_controls: true,
             clipvault: true,
             clip_paste: true,
+            monitor: "cursor".into(),
+            layout: "popup".into(),
+            show_clock: true,
+            browser_search: true,
+            browser_history: true,
+            suspend_hidden: true,
             first_run_done: false,
         }
     }

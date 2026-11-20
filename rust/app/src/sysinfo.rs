@@ -139,15 +139,15 @@ pub fn rows(q: &str) -> Vec<Value> {
                 let base = cur.map(|c| c.0 as i64).unwrap_or(50);
                 let target = if rest.starts_with('+') || rest.starts_with('-') { base + n } else { n }.clamp(0, 100);
                 out.push(toggle("vol", format!("Set volume to {target}%"), format!("{now} · Enter sets it"), "volume", &format!("vol:{target}"), 5000));
-            } else if first != "sound" || rest.is_empty() {
+            } else if rest.is_empty() {
                 if let Some((v, m)) = cur {
                     out.push(toggle("vol", format!("Volume {v}%{}", if m { " · muted" } else { "" }), "Type a number: vol 30, vol +10, vol -10".into(), "volume", if m { "unmute" } else { "mute" }, 3000));
                     out.last_mut().unwrap()["subtitle"] = json!(format!("Enter {} · type vol 30, vol +10, vol -10", if m { "unmutes" } else { "mutes" }));
                 }
             }
         }
-        "mute" => out.push(toggle("mute", "Mute sound".into(), "All output on the default device".into(), "volume", "mute", 5000)),
-        "unmute" => out.push(toggle("unmute", "Unmute sound".into(), "".into(), "volume", "unmute", 5000)),
+        "mute" if rest.is_empty() => out.push(toggle("mute", "Mute sound".into(), "All output on the default device".into(), "volume", "mute", 5000)),
+        "unmute" if rest.is_empty() => out.push(toggle("unmute", "Unmute sound".into(), "".into(), "volume", "unmute", 5000)),
         "wifi" | "wi-fi" | "wlan" | "bluetooth" | "bt" => {
             let name = if first == "bluetooth" || first == "bt" { "bluetooth" } else { "wifi" };
             let state = radio_state(name);
@@ -214,6 +214,9 @@ pub fn rows(q: &str) -> Vec<Value> {
 
 /// Run a toggle row's `op`.
 pub fn run(op: &str) -> Result<String, String> {
+    if op.starts_with("app:") || op.starts_with("dev:") || op.is_empty() {
+        return crate::audio::run(op);
+    }
     if let Some(v) = op.strip_prefix("vol:") {
         return set_volume(v.parse().map_err(|_| "bad volume")?);
     }

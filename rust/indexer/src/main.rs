@@ -10,7 +10,7 @@
 
 use glint_core::index::{Builder, VolumeIndex};
 use glint_core::ntfs::{self, ReadResult, Volume, REASON_DATA, REASON_FILE_CREATE, REASON_FILE_DELETE, REASON_RENAME_NEW_NAME};
-use glint_core::proto::{Hit, Request, SearchReply, StatusReply, VolumeStatus};
+use glint_core::proto::{ChildrenReply, Hit, Request, SearchReply, StatusReply, VolumeStatus};
 use glint_core::{pipe, PIPE_NAME, SERVICE_NAME};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
@@ -107,7 +107,7 @@ impl Engine {
                                 dir,
                                 score: s.score,
                                 mtime: (mtime != 0).then_some(mtime),
-                                size: (mtime != 0 && !dir).then_some(size),
+                                size: (mtime != 0 && (!dir || size > 0)).then_some(size),
                             });
                         }
                     }
@@ -115,6 +115,32 @@ impl Engine {
                     hits.truncate(query.limit.max(1));
                 }
                 serde_json::to_string(&SearchReply { hits, micros: t.elapsed().as_micros() as u64, error: None }).unwrap()
+            }
+            Request::Children { path, limit } => {
+                let letter = path.chars().next().unwrap_or('C').to_ascii_uppercase();
+                let mut reply = ChildrenReply::default();
+                match self.vols.iter().find(|v| v.letter.to_ascii_uppercase() == letter) {
+                    None => reply.error = Some(format!("{letter}: isn't indexed")),
+                    Some(v) => {
+                        let ready = v.status.lock().meta_ready;
+                        let idx = v.index.read();
+                        match idx.find_dir(&path) {
+                            None => reply.error = Some("Folder not found".into()),
+                            Some(d) => {
+                                let (total, kids) = idx.children_by_size(d, if limit == 0 { 0 } else { limit.min(500) });
+                                reply.total = ready.then_some(total);
+                                reply.items = kids
+                                    .into_iter()
+                                    .map(|(i, s)| {
+                                        let (m, _) = idx.meta(i);
+                                        Hit { path: idx.path(i), dir: idx.is_dir(i), score: 0, mtime: (m != 0).then_some(m), size: ready.then_some(s) }
+                                    })
+                                    .collect();
+                            }
+                        }
+                    }
+                }
+                serde_json::to_string(&reply).unwrap()
             }
         }
     }
@@ -183,8 +209,10 @@ fn fill_meta(v: Arc<Vol>, stop: Arc<AtomicBool>, scan_id: u64) {
             idx.set_meta(i, m, s);
         }
     }
+    let t2 = Instant::now();
+    v.index.write().compute_dir_sizes();
     v.status.lock().meta_ready = true;
-    log(&format!("{}: sizes and dates for {} entries in {} ms", v.letter, filled, t.elapsed().as_millis()));
+    log(&format!("{}: sizes and dates for {} entries in {} ms (folder totals {} ms)", v.letter, filled, t.elapsed().as_millis(), t2.elapsed().as_millis()));
 }
 
 /// Re-read size and date for entries that just changed.
@@ -236,6 +264,9 @@ fn scan_and_follow(v: &Arc<Vol>, stop: &Arc<AtomicBool>) -> Result<(), String> {
 
     let mut changes = Vec::with_capacity(256);
     let mut last_compact_check = Instant::now();
+    // folder totals are recomputed now and then after files change, not on every write
+    let mut sizes_dirty = false;
+    let mut last_sizes = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(400));
         changes.clear();
@@ -268,6 +299,12 @@ fn scan_and_follow(v: &Arc<Vol>, stop: &Arc<AtomicBool>) -> Result<(), String> {
             if !touched.is_empty() {
                 refresh_meta(v, &touched);
             }
+            sizes_dirty = true;
+        }
+        if sizes_dirty && last_sizes.elapsed() > Duration::from_secs(60) && v.status.lock().meta_ready {
+            v.index.write().compute_dir_sizes();
+            sizes_dirty = false;
+            last_sizes = Instant::now();
         }
         if last_compact_check.elapsed() > Duration::from_secs(600) {
             last_compact_check = Instant::now();

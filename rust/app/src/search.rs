@@ -2,7 +2,7 @@
 //! web. Special prefixes switch modes:
 //!   >cmd      run a command in PowerShell        kill name   end a process
 //!   ?words    search the web                     C:\path     browse folders (Tab completes)
-use crate::{actions, apps, calc, clipvault, content, files, history, icons, media, pins, preview, settings, shellops, sysinfo, winmgmt, wins};
+use crate::{actions, apps, audio, browser, calc, clipvault, content, files, history, icons, media, pins, preview, quick, scripts, settings, shellops, sysinfo, timers, winmgmt, wins};
 use glint_core::query::Kind;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -234,8 +234,23 @@ pub fn run(input: &str, filter: &str) -> Value {
             let c = strip(clipvault::search("", 60));
             return json!({"sections": [section("Clipboard history", c)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "clip"});
         }
+        let tm = timers::active_rows();
+        if !tm.is_empty() && filter == "all" {
+            sections.push((0, section("Timers", tm)));
+        }
+        let recent_paths: Vec<String> = recent.iter().filter_map(|r| r["path"].as_str().map(|p| p.to_lowercase())).collect();
         if !recent.is_empty() {
             sections.push((0, section("Recent", recent)));
+        }
+        if filter == "all" || filter == "files" {
+            let rf: Vec<Value> = quick::recent_files(6).into_iter().filter(|f| !recent_paths.contains(&f["path"].as_str().unwrap_or("").to_lowercase())).take(4).collect();
+            if !rf.is_empty() {
+                sections.push((0, section("Recent files", rf)));
+            }
+        }
+        if s.browser_search {
+            browser::refresh(s.browser_history);
+            browser::prefetch_tabs();
         }
         let w = strip(wins::search("", 5));
         if !w.is_empty() && filter == "all" {
@@ -258,6 +273,20 @@ pub fn run(input: &str, filter: &str) -> Value {
         let items = strip(clipvault::search(rest, 60));
         return json!({"sections": [section("Clipboard history", items)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "clip"});
     }
+    if let Some(rest) = q.strip_prefix("biggest").filter(|r| r.is_empty() || r.starts_with(' ')) {
+        return biggest(rest.trim(), t);
+    }
+    if s.browser_search {
+        if let Some(rest) = q.strip_prefix("tab ").or_else(|| (q == "tabs").then_some("")) {
+            let items = strip(browser::search_tabs(rest, 60));
+            return json!({"sections": [section("Open tabs", items)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "tabs"});
+        }
+        if let Some(rest) = q.strip_prefix("bm ") {
+            browser::refresh(s.browser_history);
+            let items = strip(browser::search_links(rest, 30, true));
+            return json!({"sections": [section("Bookmarks", items)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "bookmarks"});
+        }
+    }
     if let Some(rest) = q.strip_prefix("kill ").or_else(|| (q == "kill").then_some("")) {
         let items = strip(wins::search_processes(rest, 30));
         return json!({"sections": [section("Processes", items)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "kill"});
@@ -279,7 +308,11 @@ pub fn run(input: &str, filter: &str) -> Value {
         if !kw.is_empty() {
             sections.push((200_000, section("Keyword", kw)));
         }
-        let quick = sysinfo::rows(q);
+        let mut quick = audio::rows(q);
+        quick.extend(sysinfo::rows(q));
+        quick.extend(timers::rows(q));
+        quick.extend(quick::rows(q));
+        quick.sort_by(|a, b| b["score"].as_i64().unwrap_or(0).cmp(&a["score"].as_i64().unwrap_or(0)));
         if !quick.is_empty() {
             special = quick.iter().any(|r| r["score"].as_i64().unwrap_or(0) >= 5000);
             sections.push((150_000, section("Quick", quick)));
@@ -332,6 +365,17 @@ pub fn run(input: &str, filter: &str) -> Value {
     if all || filter == "actions" {
         push("Commands", -40, actions::search(q, if all { 4 } else { 30 }));
         push("Window layout", -60, winmgmt::search(q, if all { 3 } else { 20 }));
+    }
+    if all || filter == "actions" {
+        push("Your scripts", -30, scripts::search(q, if all { 3 } else { 30 }));
+    }
+    if all && s.browser_search && q.chars().count() >= 2 {
+        browser::refresh(s.browser_history);
+        let mut b = browser::search_tabs(q, 3);
+        b.extend(browser::search_links(q, 3, false));
+        b.sort_by(|a, c| c.0.cmp(&a.0));
+        b.truncate(4);
+        push("Browser", -200, b);
     }
     if all && s.clipvault && q.chars().count() >= 3 && clipvault::available() {
         push("Clipboard history", -260, clipvault::search(q, 3));
@@ -414,6 +458,11 @@ pub fn details(item: &Value) -> Value {
         d["path"] = json!(path);
         d["pretty"] = json!(files::pretty_dir(path));
         preview::extra(path, &mut d);
+        if kind == "folder" {
+            if let Ok(r) = files::children(path, 0) {
+                d["total"] = json!(r.total);
+            }
+        }
         let ext = crate::extract::ext_of(p);
         const THUMBS: &[&str] = &[
             "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "heic", "avif", "ico", "mp4", "mkv", "mov", "avi", "webm", "wmv", "pdf", "psd", "svg", "jfif",
@@ -457,6 +506,7 @@ pub fn details(item: &Value) -> Value {
     let key = item["key"].as_str().unwrap_or("");
     d["pinned"] = json!(pins::is_pinned(key));
     d["keywords"] = json!(pins::keywords_for(key));
+    d["hotkey"] = json!(pins::hotkey_for(key));
     d
 }
 
@@ -484,5 +534,42 @@ mod tests {
         assert!(looks_like_path("~\\Downloads"));
         assert!(looks_like_path("%appdata%"));
         assert!(!looks_like_path("chrome"));
+    }
+}
+
+/// "biggest [folder]": what takes the space, from the indexer's folder totals.
+fn biggest(arg: &str, t: Instant) -> Value {
+    let home = settings::user_home().to_string_lossy().into_owned();
+    let mut path = if arg.is_empty() { "C:\\".to_string() } else if let Some(r) = arg.strip_prefix('~') { format!("{home}{r}") } else { arg.to_string() };
+    if path.len() == 2 && path.ends_with(':') {
+        path.push('\\');
+    }
+    let done = |title: String, items: Vec<Value>| json!({"sections": [section(&title, items)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "biggest"});
+    match files::children(&path, 40) {
+        Err(e) => done(
+            "Biggest".into(),
+            vec![json!({"key": "big:err", "kind": "hint", "title": e, "subtitle": "Type a folder: biggest C:\\Users · biggest ~\\Downloads", "glyph": "hdd"})],
+        ),
+        Ok(r) => {
+            let Some(total) = r.total else {
+                return done("Biggest".into(), vec![json!({"key": "big:wait", "kind": "hint", "title": "Still adding up sizes…", "subtitle": "The indexer finishes this a minute after it starts", "glyph": "hdd"})]);
+            };
+            let items: Vec<Value> = r
+                .items
+                .into_iter()
+                .filter(|h| h.size.unwrap_or(0) > 0)
+                .map(|h| {
+                    let size = h.size.unwrap_or(0);
+                    let mut it = files::item_meta(&h.path, h.dir, 0, h.mtime, Some(size));
+                    it["share"] = json!(if total > 0 { size as f64 / total as f64 } else { 0.0 });
+                    it["subtitle"] = json!(format!("{} · {:.1}%", files::human(size), if total > 0 { size as f64 * 100.0 / total as f64 } else { 0.0 }));
+                    if h.dir {
+                        it["complete"] = json!(format!("biggest {}\\", h.path));
+                    }
+                    it
+                })
+                .collect();
+            done(format!("Biggest in {} · {}", files::pretty_dir(path.trim_end_matches('\\')), files::human(total)), items)
+        }
     }
 }

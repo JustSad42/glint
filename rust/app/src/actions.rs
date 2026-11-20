@@ -86,6 +86,7 @@ pub const ACTIONS: &[Action] = &[
     a!("envvars", "Environment variables", "Edit PATH and other variables", "environment variables path env", "terminal", false, Run::Exe("rundll32.exe", "sysdm.cpl,EditEnvironmentVariables")),
     a!("terminal", "Terminal", "Open Windows Terminal / PowerShell", "terminal powershell cmd console shell", "terminal", false, Run::Glint("terminal")),
     a!("g-settings", "Glint settings", "Hotkeys, look, content search", "glint settings preferences options config", "glint", false, Run::Glint("settings")),
+    a!("g-scripts", "Open scripts folder", "Your own commands for Glint", "glint scripts commands custom folder", "terminal", false, Run::Glint("scripts")),
     a!("g-rebuild", "Rebuild content index", "Read all your documents again", "glint reindex rebuild index content", "refresh", false, Run::Glint("rebuild")),
     a!("g-apps", "Refresh app list", "Look for newly installed apps", "glint refresh apps reload", "refresh", false, Run::Glint("apps")),
     a!("g-history", "Clear Glint history", "Forget what you opened and searched", "glint clear history forget recent", "eraser", true, Run::Glint("history")),
@@ -107,7 +108,7 @@ pub fn search(q: &str, limit: usize) -> Vec<(i32, Value)> {
             let by_title = fuzzy::score(q, a.title);
             // keywords only count as whole-word prefixes, so they don't swamp results
             let by_words = a.words.split(' ').any(|w| w.starts_with(&q.trim().to_lowercase()) && q.trim().len() >= 2).then_some(640);
-            let s = by_title.max(by_words)?;
+            let s = by_title.max(by_words).or_else(|| fuzzy::typo(q, a.title).map(|x| x - 80))?;
             let s = s - 60 + history::boost(&format!("act:{}", a.id), q);
             Some((s, item(a, s)))
         })
