@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <title>Glint</title>
+  <link rel="stylesheet" href="common.css" />
+  <link rel="stylesheet" href="launcher.css" />
+</head>
+<body>
+  <div class="shell" id="shell">
+    <header class="bar">
+      <div class="bar-icon" id="barIcon"></div>
+      <input id="q" type="text" spellcheck="false" autocomplete="off" placeholder="Search apps, files, settings and more…" />
+      <div class="bar-right">
+        <span class="mode" id="mode" hidden></span>
+        <button class="icon-btn" id="settingsBtn" title="Settings (Ctrl+,)"></button>
+      </div>
+    </header>
+    <nav class="tabs" id="tabs"></nav>
+    <main class="body">
+      <section class="results" id="results" tabindex="-1"></section>
+      <aside class="preview" id="preview"></aside>
+    </main>
+    <footer class="foot">
+      <div class="status" id="status"></div>
+      <div class="hints" id="hints"></div>
+    </footer>
+    <div class="menu" id="menu" hidden></div>
+    <div class="toast" id="toast"></div>
+  </div>
+  <script src="glyphs.js"></script>
+  <script src="launcher.js"></script>
+</body>
+</html>
