@@ -125,8 +125,17 @@ fn place(app: &AppHandle, w: &WebviewWindow) {
     let Some(m) = target_monitor(app, w) else { return };
     let s = settings::load();
     let scale = m.scale_factor();
-    let wa = m.work_area();
+    let mut wa = *m.work_area();
     let start = s.layout == "start";
+    // an auto-hidden taskbar brought up with Glint covers the bottom: sit above it
+    if start {
+        let (mp, ms) = (m.position(), m.size());
+        let mon = windows::Win32::Foundation::RECT { left: mp.x, top: mp.y, right: mp.x + ms.width as i32, bottom: mp.y + ms.height as i32 };
+        let covered = taskbar::covered_bottom(mon);
+        let wa_bottom = wa.position.y + wa.size.height as i32;
+        let overlap = (wa_bottom - (mon.bottom - covered)).max(0);
+        wa.size.height = wa.size.height.saturating_sub(overlap as u32);
+    }
     let (ww, wh) = if start { ((SW * scale) as i32, (SH * scale) as i32) } else { ((W * scale) as i32, (H * scale) as i32) };
     let wh = wh.min(wa.size.height as i32 - (24.0 * scale) as i32);
     let gap = (10.0 * scale) as i32;
@@ -170,27 +179,40 @@ pub fn show_launcher(app: &AppHandle) {
             winmgmt::PREV.store(fg.0 as isize, Ordering::SeqCst);
         }
     }
-    taskbar::lift();
+    // the taskbar is activated for an instant: don't treat that as Glint losing focus
+    *SHOWN_AT.lock() = Some(Instant::now());
+    if let Ok(h) = w.hwnd() {
+        taskbar::prepare(windows::Win32::Foundation::HWND(h.0 as _));
+    }
     place(app, &w);
     webview::resume(&w);
-    *SHOWN_AT.lock() = Some(Instant::now());
     let _ = w.emit("launcher-shown", json!({}));
     let _ = w.show();
     let _ = w.set_focus();
     if let Ok(h) = w.hwnd() {
-        wins::force_foreground(windows::Win32::Foundation::HWND(h.0 as _));
+        let h = windows::Win32::Foundation::HWND(h.0 as _);
+        wins::force_foreground(h);
+        taskbar::kick(h);
     }
     apps::refresh(false);
 }
 
+/// Drop the taskbar's hold on the Glint window (see taskbar.rs).
+fn lower_taskbar(app: &AppHandle) -> bool {
+    main_window(app).and_then(|w| w.hwnd().ok()).map(|h| taskbar::lower(windows::Win32::Foundation::HWND(h.0 as _))).unwrap_or(false)
+}
+
 pub fn hide_launcher(app: &AppHandle) {
-    taskbar::lower();
+    let lifted = lower_taskbar(app);
     if let Some(w) = main_window(app) {
         if w.is_visible().unwrap_or(false) {
             let _ = w.emit("launcher-hidden", json!({}));
             let _ = w.hide();
             webview::schedule_suspend(app);
         }
+    }
+    if lifted {
+        taskbar::hand_back(winmgmt::PREV.load(Ordering::SeqCst));
     }
 }
 
@@ -317,7 +339,7 @@ fn dismiss_notice(app: &AppHandle, id: u64) -> Option<Value> {
 fn quit(app: &AppHandle) {
     QUITTING.store(true, Ordering::SeqCst);
     let _ = std::fs::write(settings::quit_marker(), b"quit by user");
-    taskbar::lower();
+    let _ = lower_taskbar(app);
     hook::stop();
     app.exit(0);
 }
