@@ -30,6 +30,7 @@ mod search;
 mod settings;
 mod shellops;
 mod sysinfo;
+mod taskbar;
 mod timers;
 mod updater;
 mod winmgmt;
@@ -169,6 +170,7 @@ pub fn show_launcher(app: &AppHandle) {
             winmgmt::PREV.store(fg.0 as isize, Ordering::SeqCst);
         }
     }
+    taskbar::lift();
     place(app, &w);
     webview::resume(&w);
     *SHOWN_AT.lock() = Some(Instant::now());
@@ -182,6 +184,7 @@ pub fn show_launcher(app: &AppHandle) {
 }
 
 pub fn hide_launcher(app: &AppHandle) {
+    taskbar::lower();
     if let Some(w) = main_window(app) {
         if w.is_visible().unwrap_or(false) {
             let _ = w.emit("launcher-hidden", json!({}));
@@ -314,6 +317,7 @@ fn dismiss_notice(app: &AppHandle, id: u64) -> Option<Value> {
 fn quit(app: &AppHandle) {
     QUITTING.store(true, Ordering::SeqCst);
     let _ = std::fs::write(settings::quit_marker(), b"quit by user");
+    taskbar::lower();
     hook::stop();
     app.exit(0);
 }
@@ -833,6 +837,7 @@ fn main() {
     if !has("--watchdog") && !has("--quit") {
         let _ = std::fs::remove_file(settings::quit_marker());
     }
+    taskbar::restore_after_crash();
     let tray_start = has("--tray");
     // with another copy running, the single-instance plugin hands it "--quit" and this process
     // ends; otherwise there is nothing to quit

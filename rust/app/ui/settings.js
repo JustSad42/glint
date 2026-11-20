@@ -146,6 +146,7 @@ const pages = {
       ${item('user', 'Your name', 'Shown at the top of the Start menu. Leave empty to use your Windows user name.', `<input class="inp" id="displayName" value="${esc(S.display_name || '')}" placeholder="${esc(S._user || 'Name')}" maxlength="40"/>`)}
       ${item('monitor', 'Opens on', 'With more than one screen: the one your mouse is on, or always your main screen.', seg('monitor', S.monitor, [['cursor', 'Screen with mouse'], ['primary', 'Main screen']]))}
       ${item('layout', 'Pop-up position', 'Where the pop-up sits on the screen.', seg('position', S.position, [['top', 'Upper third'], ['center', 'Center']]))}
+      ${item('layout', 'Show the taskbar with Glint', 'If your taskbar auto-hides, it comes up while Glint is open, like with the Windows Start menu. Maximized windows make room for it until Glint closes.', sw('show_taskbar', S.show_taskbar))}
       ${item('clock', 'Show time and date', 'In the search bar, always in view when Glint is open.', sw('show_clock', S.show_clock))}
       ${item('props', 'Preview pane', 'Details, thumbnails and text previews next to the results. <kbd>Ctrl</kbd>+<kbd>P</kbd> toggles it.', sw('show_preview', S.show_preview))}
       ${item('download', 'Check for updates', 'Once a day, quietly. You choose when to install.', sw('check_updates', S.check_updates))}

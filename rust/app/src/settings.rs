@@ -82,6 +82,8 @@ pub struct Settings {
     pub display_name: String,
     /// time and date in the search bar
     pub show_clock: bool,
+    /// an auto-hidden taskbar comes up while Glint is open
+    pub show_taskbar: bool,
     /// search browser bookmarks and open tabs
     pub browser_search: bool,
     /// ...and browser history
@@ -123,6 +125,7 @@ impl Default for Settings {
             start_position: "left".into(),
             display_name: String::new(),
             show_clock: true,
+            show_taskbar: true,
             browser_search: true,
             browser_history: true,
             suspend_hidden: true,
