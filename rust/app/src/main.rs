@@ -129,9 +129,13 @@ fn place(app: &AppHandle, w: &WebviewWindow) {
     let (ww, wh) = if start { ((SW * scale) as i32, (SH * scale) as i32) } else { ((W * scale) as i32, (H * scale) as i32) };
     let wh = wh.min(wa.size.height as i32 - (24.0 * scale) as i32);
     let gap = (10.0 * scale) as i32;
-    let x = if start { wa.position.x + gap } else { wa.position.x + (wa.size.width as i32 - ww) / 2 };
+    // Start-menu layout: bottom-left corner, bottom center, or the middle of the screen
+    let corner = start && s.start_position != "center" && s.start_position != "bottom";
+    let x = if corner { wa.position.x + gap } else { wa.position.x + (wa.size.width as i32 - ww) / 2 };
     let top = s.position != "center";
-    let y = if start {
+    let y = if start && s.start_position == "center" {
+        wa.position.y + (wa.size.height as i32 - wh) / 2
+    } else if start {
         wa.position.y + wa.size.height as i32 - wh - gap
     } else if top {
         wa.position.y + (wa.size.height as f64 * 0.16) as i32
@@ -673,6 +677,7 @@ fn handle(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
             let mut v = serde_json::to_value(settings::load()).unwrap();
             v["_version"] = json!(updater::VERSION);
             v["_filepilot_found"] = json!(!settings::default_filepilot().is_empty());
+            v["_user"] = json!(std::env::var("USERNAME").unwrap_or_default());
             v
         }
         "settings_set" => {

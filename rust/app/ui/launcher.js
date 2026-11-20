@@ -807,10 +807,21 @@ function renderMenu() {
     .map((a, i) => `<div class="mi ${i === m.sel ? 'sel' : ''} ${a.danger ? 'danger' : ''}" data-i="${i}">${glyph(a.icon, 16)}<span>${esc(a.label)}</span>${a.keys?.length ? `<span class="keys">${a.keys.map((k) => `<kbd>${k}</kbd>`).join('')}</span>` : ''}</div>`)
     .join('')}</div>`;
   menuEl.querySelectorAll('.mi').forEach((el) => {
-    el.onmousemove = () => { if (m.sel !== +el.dataset.i) { m.sel = +el.dataset.i; renderMenu(); } };
+    // hovering only moves the highlight: rebuilding the list here reset its scroll position,
+    // so scrolling with the wheel kept jumping back to the top
+    el.onmousemove = () => { if (m.sel !== +el.dataset.i) setMenuSel(+el.dataset.i, false); };
     el.onclick = () => runAction(m.item, m.items[+el.dataset.i]);
   });
   menuEl.querySelector('.mi.sel')?.scrollIntoView({ block: 'nearest' });
+}
+
+/// Move the menu highlight without rebuilding it (scrolls only when the keyboard moved it).
+function setMenuSel(i, scroll = true) {
+  const m = S.menu;
+  if (!m) return;
+  m.sel = i;
+  menuEl.querySelectorAll('.mi').forEach((el) => el.classList.toggle('sel', +el.dataset.i === i));
+  if (scroll) menuEl.querySelector('.mi.sel')?.scrollIntoView({ block: 'nearest' });
 }
 
 // ------------------------------------------------------------------ footer
@@ -891,8 +902,8 @@ document.addEventListener('keydown', (e) => {
   // the action menu has its own keys
   if (S.menu) {
     const m = S.menu;
-    if (k === 'ArrowDown') { m.sel = (m.sel + 1) % m.items.length; renderMenu(); }
-    else if (k === 'ArrowUp') { m.sel = (m.sel - 1 + m.items.length) % m.items.length; renderMenu(); }
+    if (k === 'ArrowDown') setMenuSel((m.sel + 1) % m.items.length);
+    else if (k === 'ArrowUp') setMenuSel((m.sel - 1 + m.items.length) % m.items.length);
     else if (k === 'Enter') runAction(m.item, m.items[m.sel]);
     else if (k === 'Escape' || k === 'ArrowLeft' || (ctrl && k.toLowerCase() === 'k')) closeMenu();
     else return;
@@ -986,6 +997,8 @@ document.addEventListener('keydown', (e) => {
 
 // mouse: hovering selects (only after a real mouse move, so typing doesn't jump), click opens
 resultsEl.addEventListener('mousemove', (e) => {
+  // with the action menu open, the results underneath stay put
+  if (S.menu) return;
   const row = e.target.closest('.row');
   if (row && +row.dataset.i !== S.sel) updateSel(+row.dataset.i);
 });

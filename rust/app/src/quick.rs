@@ -116,8 +116,10 @@ pub fn start_home() -> Value {
         ("Music", f(&FOLDERID_Music, "Music"), "volume"),
         ("Videos", f(&FOLDERID_Videos, "Videos"), "film"),
     ];
+    let name = settings::load().display_name.trim().to_string();
+    let user = if name.is_empty() { std::env::var("USERNAME").unwrap_or_default() } else { name };
     json!({
-        "user": std::env::var("USERNAME").unwrap_or_default(),
+        "user": user,
         "folders": list.iter().filter(|(_, p, _)| p.exists()).map(|(n, p, g)| {
             let mut it = files::item(&p.to_string_lossy(), true, 0);
             it["title"] = json!(n);

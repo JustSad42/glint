@@ -142,6 +142,8 @@ const pages = {
       ${item('rocket', 'Start with Windows', 'Glint waits quietly in the background so it opens instantly.', sw('start_with_windows', S.start_with_windows))}
       ${item('layout', 'Show tray icon', 'Off runs Glint fully hidden. You can still reach settings with the gear in the search window, by typing “settings”, or from “Glint Settings” in the Start menu. Type “quit glint” to close it.', sw('show_tray', S.show_tray))}
       ${item('grid', 'Style', 'Pop-up floats in the middle of the screen. Start menu docks Glint above the taskbar, bottom-left, like the classic Windows Start menu, with your pinned apps, All apps, folders and power buttons.', seg('layout', S.layout, [['popup', 'Pop-up'], ['start', 'Start menu']]))}
+      ${item('layout', 'Start menu position', 'Where the Start-menu style opens.', seg('start_position', S.start_position, [['left', 'Bottom left'], ['bottom', 'Bottom center'], ['center', 'Center']]))}
+      ${item('user', 'Your name', 'Shown at the top of the Start menu. Leave empty to use your Windows user name.', `<input class="inp" id="displayName" value="${esc(S.display_name || '')}" placeholder="${esc(S._user || 'Name')}" maxlength="40"/>`)}
       ${item('monitor', 'Opens on', 'With more than one screen: the one your mouse is on, or always your main screen.', seg('monitor', S.monitor, [['cursor', 'Screen with mouse'], ['primary', 'Main screen']]))}
       ${item('layout', 'Pop-up position', 'Where the pop-up sits on the screen.', seg('position', S.position, [['top', 'Upper third'], ['center', 'Center']]))}
       ${item('clock', 'Show time and date', 'In the search bar, always in view when Glint is open.', sw('show_clock', S.show_clock))}
@@ -349,6 +351,11 @@ function go(p) {
       const f = await call('pick_file');
       if (f) { await save({ filepilot_path: f, win_e_filepilot: true }, 'File Pilot set'); go('keyboard'); }
     };
+  }
+  if (p === 'general') {
+    const dn = $('displayName');
+    dn.onchange = () => save({ display_name: dn.value.trim() }, 'Saved');
+    dn.onkeydown = (e) => { if (e.key === 'Enter') dn.blur(); };
   }
   if (p === 'search') {
     const r = $('maxFiles');

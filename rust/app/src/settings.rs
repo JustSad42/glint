@@ -76,6 +76,10 @@ pub struct Settings {
     pub monitor: String,
     /// "popup" (floating search) or "start" (docked above the taskbar like the classic Start menu)
     pub layout: String,
+    /// where the Start-menu layout opens: "left" (bottom-left corner), "bottom" (bottom center) or "center"
+    pub start_position: String,
+    /// the name shown in the Start-menu layout (empty: your Windows user name)
+    pub display_name: String,
     /// time and date in the search bar
     pub show_clock: bool,
     /// search browser bookmarks and open tabs
@@ -116,6 +120,8 @@ impl Default for Settings {
             clip_paste: true,
             monitor: "cursor".into(),
             layout: "popup".into(),
+            start_position: "left".into(),
+            display_name: String::new(),
             show_clock: true,
             browser_search: true,
             browser_history: true,
