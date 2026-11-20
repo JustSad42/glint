@@ -24,6 +24,18 @@ pub struct Win {
     pub pid: u32,
 }
 
+pub fn title_of(h: HWND) -> String {
+    unsafe {
+        let len = GetWindowTextLengthW(h);
+        if len <= 0 {
+            return String::new();
+        }
+        let mut buf = vec![0u16; len as usize + 1];
+        let n = GetWindowTextW(h, &mut buf);
+        String::from_utf16_lossy(&buf[..n.max(0) as usize])
+    }
+}
+
 pub fn exe_of(pid: u32) -> String {
     unsafe {
         let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return String::new() };

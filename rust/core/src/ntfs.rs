@@ -27,7 +27,9 @@ pub const REASON_FILE_CREATE: u32 = 0x0000_0100;
 pub const REASON_FILE_DELETE: u32 = 0x0000_0200;
 pub const REASON_RENAME_OLD_NAME: u32 = 0x0000_1000;
 pub const REASON_RENAME_NEW_NAME: u32 = 0x0000_2000;
-const WATCH: u32 = REASON_FILE_CREATE | REASON_FILE_DELETE | REASON_RENAME_NEW_NAME | REASON_RENAME_OLD_NAME;
+/// contents written, grown or truncated, or timestamps changed: size or date may differ
+pub const REASON_DATA: u32 = 0x0000_0001 | 0x0000_0002 | 0x0000_0004 | 0x0000_8000;
+const WATCH: u32 = REASON_FILE_CREATE | REASON_FILE_DELETE | REASON_RENAME_NEW_NAME | REASON_RENAME_OLD_NAME | REASON_DATA;
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()

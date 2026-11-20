@@ -97,6 +97,11 @@ pub struct VolumeIndex {
     map: HashMap<u64, u32>,
     dead: usize,
     garbage: usize,
+    /// modified time (unix seconds, 0 = not known yet) and size in bytes, parallel to `entries`
+    mtime: Vec<u32>,
+    size: Vec<u64>,
+    /// bumped by `compact`, which renumbers entries
+    pub generation: u64,
 }
 
 /// A ranked match, before its path is built.
@@ -121,6 +126,9 @@ impl VolumeIndex {
             map: HashMap::new(),
             dead: 0,
             garbage: 0,
+            mtime: Vec::new(),
+            size: Vec::new(),
+            generation: 0,
         }
     }
 
@@ -147,6 +155,8 @@ impl VolumeIndex {
     fn push_name(&mut self, name: &str, flags: u8) -> u32 {
         let (name_off, lower_off, name_len, lower_len) = self.store_name(name);
         self.entries.push(Entry { parent: ROOT, name_off, lower_off, name_len, lower_len, flags });
+        self.mtime.push(0);
+        self.size.push(0);
         (self.entries.len() - 1) as u32
     }
 
@@ -338,6 +348,42 @@ impl VolumeIndex {
         false
     }
 
+    pub fn set_meta(&mut self, i: u32, mtime: u32, size: u64) {
+        if let (Some(m), Some(z)) = (self.mtime.get_mut(i as usize), self.size.get_mut(i as usize)) {
+            *m = mtime;
+            *z = size;
+        }
+    }
+
+    /// (modified unix seconds, size); mtime 0 means not known yet.
+    pub fn meta(&self, i: u32) -> (u32, u64) {
+        (self.mtime.get(i as usize).copied().unwrap_or(0), self.size.get(i as usize).copied().unwrap_or(0))
+    }
+
+    pub fn index_of(&self, frn: u64) -> Option<u32> {
+        self.map.get(&frn).copied()
+    }
+
+    /// Every folder (the drive root included) with its live children:
+    /// (folder path, [(lowercase name, index)]). Used to fill in sizes and dates one
+    /// directory listing at a time.
+    pub fn dir_listings(&self) -> Vec<(String, Vec<(String, u32)>)> {
+        let mut kids: HashMap<u32, Vec<u32>> = HashMap::new();
+        for (i, e) in self.entries.iter().enumerate() {
+            if e.flags & F_DEAD == 0 {
+                kids.entry(e.parent).or_default().push(i as u32);
+            }
+        }
+        kids.into_iter()
+            .filter(|(p, _)| *p == ROOT || self.entries[*p as usize].flags & (F_DEAD | F_DIR) == F_DIR)
+            .map(|(p, list)| {
+                let path = if p == ROOT { format!("{}:\\", self.letter) } else { self.path(p) };
+                let names = list.into_iter().map(|i| (String::from_utf8_lossy(self.lower(i)).into_owned(), i)).collect();
+                (path, names)
+            })
+            .collect()
+    }
+
     /// The best `q.limit` matches, best first.
     pub fn search(&self, q: &Query) -> Vec<Scored> {
         let limit = q.limit.clamp(1, 1000);
@@ -355,6 +401,9 @@ impl VolumeIndex {
         let n_plain = plain.len();
         let exts: Vec<Vec<u8>> = q.exts.iter().map(|e| format!(".{e}").into_bytes()).collect();
         let total_len: usize = name_words.iter().map(|t| t.len()).sum();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) as i64;
+        let filtered_time = q.dm_min.is_some() || q.dm_max.is_some();
+        let filtered_size = q.size_min.is_some() || q.size_max.is_some();
 
         const CHUNK: usize = 1 << 15;
         let heaps: Vec<BinaryHeap<Reverse<Scored>>> = self
@@ -378,6 +427,16 @@ impl VolumeIndex {
                         continue;
                     }
                     let idx = (c * CHUNK + k) as u32;
+                    let mt = self.mtime.get(idx as usize).copied().unwrap_or(0);
+                    if filtered_time && (mt == 0 || q.dm_min.is_some_and(|m| mt < m) || q.dm_max.is_some_and(|m| mt >= m)) {
+                        continue;
+                    }
+                    if filtered_size {
+                        let sz = self.size.get(idx as usize).copied().unwrap_or(0);
+                        if e.flags & F_DIR != 0 || mt == 0 || q.size_min.is_some_and(|m| sz < m) || q.size_max.is_some_and(|m| sz > m) {
+                            continue;
+                        }
+                    }
                     let mut any = finders.is_empty();
                     for (t, f) in finders.iter().enumerate() {
                         found[t] = f.find(lower).unwrap_or(usize::MAX);
@@ -411,7 +470,21 @@ impl VolumeIndex {
                             continue;
                         }
                     }
-                    let score = score_entry(lower, e.flags, &name_words, &found, in_parent, total_len);
+                    let age = if mt == 0 { i64::MAX } else { now - mt as i64 };
+                    let score = if finders.is_empty() {
+                        // filters only ("dm:today"): newest first, your own files before system ones
+                        let fresh = (400 * 86400 - age.clamp(0, 400 * 86400)) / 3600;
+                        fresh as i32 + flag_score(e.flags)
+                    } else {
+                        // a little lift for things touched recently
+                        let recency = match age {
+                            a if a < 86400 => 60,
+                            a if a < 7 * 86400 => 35,
+                            a if a < 30 * 86400 => 15,
+                            _ => 0,
+                        };
+                        score_entry(lower, e.flags, &name_words, &found, in_parent, total_len) + recency
+                    };
                     let s = Scored { score, idx };
                     if heap.len() < limit {
                         heap.push(Reverse(s));
@@ -437,11 +510,15 @@ impl VolumeIndex {
         let mut lower = String::with_capacity(self.lower.len());
         let mut remap = vec![ROOT; self.entries.len()];
         let mut entries = Vec::with_capacity(self.entries.len() - self.dead);
+        let mut mtime = Vec::with_capacity(self.entries.len() - self.dead);
+        let mut size = Vec::with_capacity(self.entries.len() - self.dead);
         for (i, e) in self.entries.iter().enumerate() {
             if e.flags & F_DEAD != 0 {
                 continue;
             }
             remap[i] = entries.len() as u32;
+            mtime.push(self.mtime[i]);
+            size.push(self.size[i]);
             let mut ne = *e;
             ne.name_off = names.len() as u32;
             ne.lower_off = lower.len() as u32;
@@ -459,10 +536,13 @@ impl VolumeIndex {
         }
         self.map.retain(|_, v| *v != ROOT);
         self.entries = entries;
+        self.mtime = mtime;
+        self.size = size;
         self.names = names;
         self.lower = lower;
         self.dead = 0;
         self.garbage = 0;
+        self.generation += 1;
     }
 }
 
@@ -498,6 +578,8 @@ impl Builder {
         v.names.shrink_to_fit();
         v.lower.shrink_to_fit();
         v.map.shrink_to_fit();
+        v.mtime.shrink_to_fit();
+        v.size.shrink_to_fit();
         v
     }
 }
@@ -543,6 +625,14 @@ fn score_entry(lower: &[u8], flags: u8, words: &[String], found: &[usize], in_pa
         s += ((total_len.min(stem.len().max(1)) * 160) / stem.len().max(1)) as i32;
     }
     s += in_parent * 15;
+    s += flag_score(flags);
+    s -= (lower.len() as i32).min(200) / 3;
+    s
+}
+
+/// Your own files up, system clutter down.
+fn flag_score(flags: u8) -> i32 {
+    let mut s = 0;
     if flags & F_NOISE != 0 {
         s -= 700;
     }
@@ -555,7 +645,6 @@ fn score_entry(lower: &[u8], flags: u8, words: &[String], found: &[usize], in_pa
     if flags & (F_HIDDEN | F_SYSTEM) != 0 {
         s -= 120;
     }
-    s -= (lower.len() as i32).min(200) / 3;
     s
 }
 
@@ -643,6 +732,30 @@ mod tests {
         assert_eq!(top(&v, "*.xlsx"), vec![r"C:\Users\Me\Documents\Budget 2024.xlsx".to_string()]);
         assert_eq!(top(&v, "doc folder:"), vec![r"C:\Users\Me\Documents".to_string()]);
         assert!(top(&v, "documents file:").is_empty());
+    }
+
+    #[test]
+    fn date_and_size_filters() {
+        let mut v = sample();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32;
+        let budget = v.map[&13];
+        let notes = v.map[&14];
+        v.set_meta(budget, now - 3600, 5_000_000);
+        v.set_meta(notes, now - 40 * 86400, 120);
+        let mut q = parse("");
+        q.dm_min = Some(now - 86400);
+        let r: Vec<String> = v.search(&q).into_iter().map(|s| v.path(s.idx)).collect();
+        assert_eq!(r, vec![r"C:\Users\Me\Documents\Budget 2024.xlsx".to_string()]);
+        let mut q = parse("");
+        q.size_min = Some(1_000_000);
+        assert_eq!(v.search(&q).len(), 1);
+        let mut q = parse("notes");
+        q.size_max = Some(1000);
+        let r: Vec<String> = v.search(&q).into_iter().map(|s| v.path(s.idx)).collect();
+        assert_eq!(r, vec![r"C:\Users\Me\Documents\notes.txt".to_string()]);
+        let listings = v.dir_listings();
+        assert!(listings.iter().any(|(p, kids)| p == r"C:\Users\Me\Documents" && kids.len() == 2));
+        assert!(listings.iter().any(|(p, _)| p == r"C:\"));
     }
 
     #[test]

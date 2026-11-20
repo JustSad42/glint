@@ -180,6 +180,19 @@ pub fn apply(s: &crate::settings::Settings) {
     ALT_SPACE.store(s.alt_space, Ordering::SeqCst);
 }
 
+/// Press Ctrl+V in whatever window is in front.
+pub fn send_paste() {
+    let key = |vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: MARK } },
+    };
+    let v = VIRTUAL_KEY(0x56);
+    let inputs = [key(VK_CONTROL, KEYBD_EVENT_FLAGS(0)), key(v, KEYBD_EVENT_FLAGS(0)), key(v, KEYEVENTF_KEYUP), key(VK_CONTROL, KEYEVENTF_KEYUP)];
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
 /// Open the real Start menu (Ctrl+Esc).
 pub fn open_start_menu() {
     let key = |vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {

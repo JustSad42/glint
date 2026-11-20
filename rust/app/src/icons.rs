@@ -108,6 +108,16 @@ pub fn request(url_path: &str, reply: impl FnOnce(Option<Png>) + Send + 'static)
     let url_path = url_path.trim_start_matches('/');
     let (kind, rest) = url_path.split_once('/').unwrap_or((url_path, ""));
     let rest = urlencoding::decode(rest).map(|c| c.into_owned()).unwrap_or_default();
+    if kind == "media" {
+        // cover art changes with the track, so it's never cached; WinRT calls go on an MTA thread
+        std::thread::spawn(move || {
+            unsafe {
+                let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+            }
+            reply(crate::media::cover().map(Arc::new));
+        });
+        return;
+    }
     let (parsing, key, size, thumb, disk) = match kind {
         "app" => (format!("shell:AppsFolder\\{rest}"), format!("app:{rest}"), 64, false, true),
         "thumb" => (rest.clone(), format!("thumb:{rest}"), 320, true, false),

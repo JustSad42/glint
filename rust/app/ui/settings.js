@@ -10,6 +10,7 @@ const PAGES = [
   { id: 'keyboard', label: 'Keyboard', icon: 'keyboard' },
   { id: 'search', label: 'Search', icon: 'search' },
   { id: 'content', label: 'File contents', icon: 'filetext' },
+  { id: 'extras', label: 'Extras & pins', icon: 'bolt' },
   { id: 'appearance', label: 'Appearance', icon: 'palette' },
   { id: 'privacy', label: 'Privacy & data', icon: 'shield' },
   { id: 'about', label: 'About & updates', icon: 'info' },
@@ -168,6 +169,8 @@ const pages = {
       <div>Properties · Open with · Terminal here</div><div><kbd>Alt</kbd><kbd>↵</kbd> · <kbd>Ctrl</kbd><kbd>O</kbd> · <kbd>Ctrl</kbd><kbd>T</kbd></div>
       <div>Move to Recycle Bin</div><div><kbd>Shift</kbd><kbd>Del</kbd> twice</div>
       <div>Toggle preview</div><div><kbd>Ctrl</kbd><kbd>P</kbd></div>
+      <div>Pin / unpin the selection</div><div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd></div>
+      <div>Clipboard clip: copy without pasting</div><div><kbd>Ctrl</kbd><kbd>↵</kbd></div>
     </div>`,
 
   search: () => `
@@ -190,6 +193,14 @@ const pages = {
       <div>Run in PowerShell</div><div><code>&gt;ipconfig /all</code></div>
       <div>End a process</div><div><code>kill chrome</code></div>
       <div>Web search</div><div><code>?how to …</code></div>
+      <div>Changed recently</div><div><code>dm:today</code> · <code>dm:3d</code> · <code>dm:2025-06</code> · <code>dm:&gt;2025-01-01</code></div>
+      <div>By size</div><div><code>size:&gt;100mb</code> · <code>size:1gb..4gb</code> · <code>size:huge</code> · <code>size:empty</code></div>
+      <div>Newest big videos</div><div><code>*.mp4 size:&gt;500mb dm:month</code></div>
+      <div>Volume, mute, radios</div><div><code>vol 40</code> · <code>mute</code> · <code>wifi off</code> · <code>bt on</code></div>
+      <div>System info (Enter copies)</div><div><code>ip</code> · <code>battery</code> · <code>uptime</code> · <code>ram</code> · <code>disk</code></div>
+      <div>Move the window you came from</div><div><code>left</code> · <code>right</code> · <code>max</code> · <code>center</code> · <code>third</code> · <code>next monitor</code></div>
+      <div>Media</div><div><code>play</code> · <code>pause</code> · <code>next</code> · <code>prev</code></div>
+      <div>Clipboard history (ClipVault)</div><div><code>clip invoice</code> · <code>cb </code></div>
     </div>`,
 
   content: () => `
@@ -206,6 +217,20 @@ const pages = {
     <div class="card list" id="excludes"></div>
     <p class="note">Always skipped: AppData, hidden folders, build and package folders (node_modules, target, .git…), online-only OneDrive files (reading them would download them), and files that usually hold secrets (.env, keys, password databases).</p>`,
 
+  extras: () => `
+    <h1>Extras & pins</h1><p class="lead">Media controls, clipboard history, and the things you've pinned or given a keyword.</p>
+    <div class="card">
+      ${item('play', 'Media controls', 'A “Now playing” card when Glint opens, plus play, pause, next and previous. Works with Spotify, browsers and anything that shows in the Windows media flyout.', sw('media_controls', S.media_controls))}
+      ${item('clipboard', 'ClipVault history', status?.clipvault ? 'Search what you copied with <code>clip …</code>, the Clipboard tab, or the top matches in All.' : 'ClipVault wasn\'t found on this PC. Install it to search your clipboard history here.', sw('clipvault', S.clipvault))}
+      ${item('enter', 'Enter pastes the clip', 'Puts it on the clipboard and pastes it into the window you were in. Off just copies it. <kbd>Ctrl</kbd>+<kbd>↵</kbd> always only copies.', sw('clip_paste', S.clip_paste))}
+    </div>
+    <h2>Pinned</h2>
+    <p class="note" style="margin-top:-4px">Pinned items show first when Glint opens and rise to the top of results. Pin anything with <kbd>→</kbd> › Pin, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>.</p>
+    <div class="card list" id="pinList"></div>
+    <h2>Keywords</h2>
+    <p class="note" style="margin-top:-4px">Type a keyword and its item comes first. Add one with <kbd>→</kbd> › Add keyword….</p>
+    <div class="card list" id="kwList"></div>`,
+
   appearance: () => `
     <h1>Appearance</h1><p class="lead">Make it yours.</p>
     <div class="card">
@@ -215,7 +240,7 @@ const pages = {
     </div>`,
 
   privacy: () => `
-    <h1>Privacy & data</h1><p class="lead">Everything stays on this PC. Glint never sends your searches or files anywhere; the only thing it fetches is the update check from GitHub.</p>
+    <h1>Privacy & data</h1><p class="lead">Everything stays on this PC. Glint never sends your searches or files anywhere. It only goes online for the update check (GitHub), and for “Public IP” when you press Enter on it (api.ipify.org).</p>
     <div class="card">
       ${item('history', 'Search history', 'Glint learns what you open to rank it higher next time, and remembers recent searches for the Up arrow.', `<button class="btn danger" id="clearHist">${glyph('eraser', 15)}Clear</button>`)}
       ${item('folder', 'Data folder', `<code>${esc(status?.data_dir || '')}</code>`, `<button class="btn" id="openData">${glyph('external', 15)}Open</button>`)}
@@ -334,6 +359,24 @@ function go(p) {
     $('openData').onclick = () => call('open_path', { path: status?.data_dir });
   }
   if (p === 'about') loadUpdate(false);
+  if (p === 'extras') loadPins();
+}
+
+const KIND_ICON = { app: 'app', file: 'file', folder: 'folder', action: 'bolt', url: 'globe', layout: 'layout', toggle: 'sliders', command: 'terminal' };
+async function loadPins() {
+  let d;
+  try { d = await call('pins_list'); } catch { return; }
+  const pl = $('pinList');
+  const kl = $('kwList');
+  if (!pl || !kl) return;
+  pl.innerHTML = d.pinned.length
+    ? d.pinned.map((x) => `<div class="li">${glyph(KIND_ICON[x.kind] || 'pin', 16)}<span class="p">${esc(x.title)}</span><button class="x" data-key="${esc(x.key)}" title="Unpin">${glyph('x', 14)}</button></div>`).join('')
+    : `<div class="li"><span class="p" style="color:var(--text-3)">Nothing pinned yet.</span></div>`;
+  kl.innerHTML = d.keywords.length
+    ? d.keywords.map((x) => `<div class="li"><code class="kw">${esc(x.keyword)}</code><span class="p">${esc(x.title)}</span><button class="x" data-word="${esc(x.keyword)}" title="Remove">${glyph('x', 14)}</button></div>`).join('')
+    : `<div class="li"><span class="p" style="color:var(--text-3)">No keywords yet.</span></div>`;
+  pl.querySelectorAll('.x').forEach((b) => (b.onclick = async () => { await call('unpin', { key: b.dataset.key }); toast('Unpinned'); loadPins(); }));
+  kl.querySelectorAll('.x').forEach((b) => (b.onclick = async () => { await call('keyword_remove', { word: b.dataset.word }); toast('Keyword removed'); loadPins(); }));
 }
 
 listen('goto', (p) => go(p));

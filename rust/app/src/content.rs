@@ -501,7 +501,7 @@ pub fn name_search(q: &Query) -> Vec<Hit> {
         .take(2000)
         .map(|(name, path, dir)| {
             let starts = q.tokens.iter().any(|t| name.starts_with(t.as_str()));
-            Hit { path: path.clone(), dir: *dir, score: if starts { 300 } else { 150 } - (name.len() as i32).min(100) }
+            Hit { path: path.clone(), dir: *dir, score: if starts { 300 } else { 150 } - (name.len() as i32).min(100), ..Default::default() }
         })
         .collect();
     v.sort_by(|a, b| b.score.cmp(&a.score));

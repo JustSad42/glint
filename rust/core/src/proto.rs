@@ -17,6 +17,11 @@ pub struct Hit {
     pub path: String,
     pub dir: bool,
     pub score: i32,
+    /// modified (unix seconds) and size, when the indexer knows them
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtime: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -38,6 +43,9 @@ pub struct VolumeStatus {
     /// how long the last full scan took
     #[serde(default)]
     pub scan_ms: u64,
+    /// sizes and dates filled in for every file
+    #[serde(default)]
+    pub meta_ready: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

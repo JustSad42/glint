@@ -10,6 +10,7 @@
 mod actions;
 mod apps;
 mod calc;
+mod clipvault;
 mod content;
 mod extract;
 mod files;
@@ -17,10 +18,15 @@ mod fuzzy;
 mod history;
 mod hook;
 mod icons;
+mod media;
+mod pins;
+mod preview;
 mod search;
 mod settings;
 mod shellops;
+mod sysinfo;
 mod updater;
+mod winmgmt;
 mod wins;
 
 use once_cell::sync::OnceCell;
@@ -115,6 +121,14 @@ pub fn show_launcher(app: &AppHandle) {
     if w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false) {
         hide_launcher(app);
         return;
+    }
+    // remember the window you came from: layouts move it and clips paste into it
+    unsafe {
+        let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+        let ours = w.hwnd().map(|h| h.0 as isize == fg.0 as isize).unwrap_or(false);
+        if !fg.is_invalid() && !ours {
+            winmgmt::PREV.store(fg.0 as isize, Ordering::SeqCst);
+        }
     }
     place(app, &w);
     *SHOWN_AT.lock() = Some(Instant::now());
@@ -241,6 +255,22 @@ fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Va
             shellops::copy_files(&[path.to_string()])?;
             done(Some("Copied — paste it in a folder or chat"), false)
         }
+        (_, "pin") => {
+            pins::pin(&clean_item(item));
+            Ok(json!({"hide": false, "toast": "Pinned — it shows first when Glint opens", "refresh": true}))
+        }
+        (_, "unpin") => {
+            pins::unpin(key);
+            Ok(json!({"hide": false, "toast": "Unpinned", "refresh": true}))
+        }
+        (_, m) if m.starts_with("keyword:") => {
+            let w = pins::set_keyword(&m[8..], &clean_item(item))?;
+            Ok(json!({"hide": false, "toast": format!("Type \"{w}\" to open it"), "refresh": true}))
+        }
+        (_, m) if m.starts_with("unkeyword:") => {
+            pins::remove_keyword(&m[10..]);
+            Ok(json!({"hide": false, "toast": "Keyword removed", "refresh": true}))
+        }
         (_, "forget") => {
             history::forget(key);
             Ok(json!({"hide": false, "toast": "Removed from Recent", "refresh": true}))
@@ -317,6 +347,44 @@ fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Va
             shellops::copy_text(&text)?;
             done(Some(&format!("Copied {text}")), false)
         }
+        ("toggle", _) => {
+            let msg = sysinfo::run(arg_str(item, "op"))?;
+            Ok(json!({"hide": false, "toast": msg, "refresh": true}))
+        }
+        ("info", _) => {
+            if arg_str(item, "op") == "public_ip" {
+                let ip = sysinfo::public_ip()?;
+                shellops::copy_text(&ip)?;
+                return done(Some(&format!("Public IP {ip} copied")), false);
+            }
+            let text = arg_str(item, "copy");
+            if text.is_empty() {
+                return done(None, false);
+            }
+            shellops::copy_text(text)?;
+            done(Some(&format!("Copied {text}")), false)
+        }
+        ("layout", _) => {
+            hide_launcher(app);
+            let op = arg_str(item, "op").to_string();
+            std::thread::sleep(Duration::from_millis(60));
+            winmgmt::apply(&op)?;
+            done(None, true)
+        }
+        ("media", _) => {
+            let msg = media::control(arg_str(item, "op"))?;
+            Ok(json!({"hide": false, "toast": msg, "refresh": true}))
+        }
+        ("clip", m) => {
+            let id = arg_str(item, "id");
+            if m == "copy" || !settings::load().clip_paste {
+                let msg = clipvault::restore(id, false)?;
+                return done(Some(&msg), false);
+            }
+            hide_launcher(app);
+            clipvault::restore(id, true)?;
+            done(None, true)
+        }
         ("url" | "web", _) => {
             shellops::open_url(arg_str(item, "url"))?;
             done(None, true)
@@ -351,6 +419,7 @@ fn status() -> Value {
         "home": settings::user_home().to_string_lossy(),
         "installed": updater::is_installed(),
         "vscode": shellops::vscode().is_some(),
+        "clipvault": clipvault::available(),
     })
 }
 
@@ -364,6 +433,15 @@ fn handle(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
             json!(true)
         }
         "queries" => json!(history::queries()),
+        "pins_list" => pins::list(),
+        "keyword_remove" => {
+            pins::remove_keyword(arg_str(&a, "word"));
+            json!(true)
+        }
+        "unpin" => {
+            pins::unpin(arg_str(&a, "key"));
+            json!(true)
+        }
         "status" => status(),
         "settings_get" => {
             let mut v = serde_json::to_value(settings::load()).unwrap();

@@ -9,10 +9,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use glint_core::index::{Builder, VolumeIndex};
-use glint_core::ntfs::{self, ReadResult, Volume, REASON_FILE_CREATE, REASON_FILE_DELETE, REASON_RENAME_NEW_NAME};
+use glint_core::ntfs::{self, ReadResult, Volume, REASON_DATA, REASON_FILE_CREATE, REASON_FILE_DELETE, REASON_RENAME_NEW_NAME};
 use glint_core::proto::{Hit, Request, SearchReply, StatusReply, VolumeStatus};
 use glint_core::{pipe, PIPE_NAME, SERVICE_NAME};
 use parking_lot::{Mutex, RwLock};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
@@ -50,6 +51,8 @@ struct Vol {
     letter: char,
     index: RwLock<VolumeIndex>,
     status: Mutex<VolumeStatus>,
+    /// bumped on every full scan, so an older size/date pass stops
+    scan_id: Mutex<u64>,
 }
 
 struct Engine {
@@ -67,6 +70,7 @@ impl Engine {
                     letter: l,
                     index: RwLock::new(VolumeIndex::new(l, 0)),
                     status: Mutex::new(VolumeStatus { letter: l, ..Default::default() }),
+                    scan_id: Mutex::new(0),
                 })
             })
             .collect();
@@ -96,7 +100,15 @@ impl Engine {
                     for v in &self.vols {
                         let idx = v.index.read();
                         for s in idx.search(&query) {
-                            hits.push(Hit { path: idx.path(s.idx), dir: idx.is_dir(s.idx), score: s.score });
+                            let (mtime, size) = idx.meta(s.idx);
+                            let dir = idx.is_dir(s.idx);
+                            hits.push(Hit {
+                                path: idx.path(s.idx),
+                                dir,
+                                score: s.score,
+                                mtime: (mtime != 0).then_some(mtime),
+                                size: (mtime != 0 && !dir).then_some(size),
+                            });
                         }
                     }
                     hits.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.path.len().cmp(&b.path.len())));
@@ -127,7 +139,73 @@ fn watch_volume(v: Arc<Vol>, stop: Arc<AtomicBool>) {
     }
 }
 
-fn scan_and_follow(v: &Vol, stop: &AtomicBool) -> Result<(), String> {
+fn mtime_of(m: &std::fs::Metadata) -> u32 {
+    m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as u32).unwrap_or(1)
+}
+
+/// Fill in every entry's size and modified date, one directory listing at a time, at background
+/// priority. Directory listings carry this for all children at once, so this is far cheaper
+/// than asking about each file.
+fn fill_meta(v: Arc<Vol>, stop: Arc<AtomicBool>, scan_id: u64) {
+    unsafe {
+        use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN};
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+    }
+    let t = Instant::now();
+    let (generation, listings) = {
+        let idx = v.index.read();
+        (idx.generation, idx.dir_listings())
+    };
+    let mut filled = 0usize;
+    for chunk in listings.chunks(200) {
+        if stop.load(Ordering::SeqCst) || *v.scan_id.lock() != scan_id {
+            return;
+        }
+        let mut ups: Vec<(u32, u32, u64)> = Vec::new();
+        for (dir, kids) in chunk {
+            let Ok(rd) = std::fs::read_dir(dir) else { continue };
+            let by_name: HashMap<&str, u32> = kids.iter().map(|(n, i)| (n.as_str(), *i)).collect();
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                if let Some(&i) = by_name.get(name.as_str()) {
+                    if let Ok(m) = e.metadata() {
+                        ups.push((i, mtime_of(&m), if m.is_dir() { 0 } else { m.len() }));
+                    }
+                }
+            }
+        }
+        let mut idx = v.index.write();
+        if idx.generation != generation {
+            return; // renumbered under us; the next scan fills again
+        }
+        filled += ups.len();
+        for (i, m, s) in ups {
+            idx.set_meta(i, m, s);
+        }
+    }
+    v.status.lock().meta_ready = true;
+    log(&format!("{}: sizes and dates for {} entries in {} ms", v.letter, filled, t.elapsed().as_millis()));
+}
+
+/// Re-read size and date for entries that just changed.
+fn refresh_meta(v: &Vol, frns: &HashSet<u64>) {
+    let targets: Vec<(u32, String, u64)> = {
+        let idx = v.index.read();
+        frns.iter().filter_map(|f| idx.index_of(*f).map(|i| (i, idx.path(i), idx.generation))).collect()
+    };
+    let ups: Vec<(u32, u32, u64, u64)> = targets
+        .into_iter()
+        .filter_map(|(i, p, g)| std::fs::symlink_metadata(&p).ok().map(|m| (i, mtime_of(&m), if m.is_dir() { 0 } else { m.len() }, g)))
+        .collect();
+    let mut idx = v.index.write();
+    for (i, m, s, g) in ups {
+        if g == idx.generation {
+            idx.set_meta(i, m, s);
+        }
+    }
+}
+
+fn scan_and_follow(v: &Arc<Vol>, stop: &Arc<AtomicBool>) -> Result<(), String> {
     let t = Instant::now();
     let mut vol = Volume::open(v.letter)?;
     let root = vol.root_frn()?;
@@ -143,8 +221,18 @@ fn scan_and_follow(v: &Vol, stop: &AtomicBool) -> Result<(), String> {
         st.ready = true;
         st.error = None;
         st.scan_ms = ms;
+        st.meta_ready = false;
     }
     log(&format!("{}: {} entries in {} ms", v.letter, n, ms));
+    let scan_id = {
+        let mut id = v.scan_id.lock();
+        *id += 1;
+        *id
+    };
+    {
+        let (v2, stop2) = (v.clone(), stop.clone());
+        std::thread::Builder::new().name(format!("meta-{}", v.letter)).spawn(move || fill_meta(v2, stop2, scan_id)).ok();
+    }
 
     let mut changes = Vec::with_capacity(256);
     let mut last_compact_check = Instant::now();
@@ -159,19 +247,32 @@ fn scan_and_follow(v: &Vol, stop: &AtomicBool) -> Result<(), String> {
             ReadResult::Ok => {}
         }
         if !changes.is_empty() {
-            let mut idx = v.index.write();
-            for c in &changes {
-                if c.reason & REASON_FILE_DELETE != 0 {
-                    idx.remove(c.rec.frn);
-                } else if c.reason & (REASON_FILE_CREATE | REASON_RENAME_NEW_NAME) != 0 {
-                    idx.upsert(c.rec.frn, c.rec.parent, &c.rec.name, c.rec.attrs);
+            let mut touched: HashSet<u64> = HashSet::new();
+            {
+                let mut idx = v.index.write();
+                for c in &changes {
+                    if c.reason & REASON_FILE_DELETE != 0 {
+                        idx.remove(c.rec.frn);
+                        touched.remove(&c.rec.frn);
+                    } else {
+                        if c.reason & (REASON_FILE_CREATE | REASON_RENAME_NEW_NAME) != 0 {
+                            idx.upsert(c.rec.frn, c.rec.parent, &c.rec.name, c.rec.attrs);
+                        }
+                        if c.reason & (REASON_FILE_CREATE | REASON_RENAME_NEW_NAME | REASON_DATA) != 0 {
+                            touched.insert(c.rec.frn);
+                        }
+                    }
                 }
+                v.status.lock().entries = idx.len();
             }
-            v.status.lock().entries = idx.len();
+            if !touched.is_empty() {
+                refresh_meta(v, &touched);
+            }
         }
         if last_compact_check.elapsed() > Duration::from_secs(600) {
             last_compact_check = Instant::now();
-            if v.index.read().waste() > 0.25 {
+            // compacting renumbers entries, so wait until sizes and dates are filled in
+            if v.status.lock().meta_ready && v.index.read().waste() > 0.25 {
                 v.index.write().compact();
                 log(&format!("{}: compacted", v.letter));
             }

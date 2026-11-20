@@ -27,12 +27,16 @@ pub fn pretty_dir(path: &str) -> String {
 }
 
 pub fn item(path: &str, dir: bool, score: i32) -> Value {
+    item_meta(path, dir, score, None, None)
+}
+
+pub fn item_meta(path: &str, dir: bool, score: i32, mtime: Option<u32>, size: Option<u64>) -> Value {
     let p = Path::new(path);
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string());
     let parent = p.parent().map(|d| pretty_dir(&d.to_string_lossy())).unwrap_or_default();
     json!({
         "key": key(path), "kind": if dir { "folder" } else { "file" }, "title": name, "subtitle": parent,
-        "icon": icons::path_url(path), "path": path, "score": score,
+        "icon": icons::path_url(path), "path": path, "score": score, "mtime": mtime, "size": size,
     })
 }
 
@@ -62,9 +66,9 @@ pub fn search(input: &str, kind: Option<Kind>, limit: usize) -> (Vec<(i32, Value
     };
     let mut out: Vec<(i32, Value)> = hits
         .into_iter()
-        .map(|Hit { path, dir, score }| {
+        .map(|Hit { path, dir, score, mtime, size }| {
             let s = score + history::boost(&key(&path), input) * 2;
-            (s, item(&path, dir, s))
+            (s, item_meta(&path, dir, s, mtime, size))
         })
         .collect();
     out.sort_by(|a, b| b.0.cmp(&a.0));

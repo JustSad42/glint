@@ -30,11 +30,20 @@ settings, a calculator and more, all in one box.
 | `>ipconfig /all` | Run a command in PowerShell (Shift+Enter: as admin) |
 | `kill chrome` | End a process |
 | `?anything` | Web search with your chosen engine |
+| `dm:today`, `dm:3d`, `size:>100mb`, `size:huge` | Filter files by date changed or size (recent files also rank higher) |
+| `vol 40`, `mute`, `wifi off`, `bt on` | Quick toggles |
+| `ip`, `battery`, `uptime`, `ram`, `disk` | System info; Enter copies |
+| `left`, `max`, `center`, `third`, `next monitor` | Move the window you came from |
+| `play`, `pause`, `next`, `prev` | Media controls, plus a "Now playing" card (can be turned off) |
+| `clip invoice` | Search [ClipVault](https://github.com/JustSad42/ClipVault) clipboard history; Enter pastes |
 
 **Keys:** Enter opens · Ctrl+Enter shows in folder · Shift+Enter runs as admin · → or Ctrl+K for all
 actions (copy path, copy file, open with, terminal here, VS Code, properties, recycle) · Tab switches
 filter · Ctrl+1…9 opens a result · ↑ on an empty box recalls past searches · Ctrl+P toggles the
-preview pane.
+preview pane · Ctrl+Shift+P pins an item · → › Add keyword gives it a shortcut word.
+
+The preview plays images, video and audio, and shows dimensions, length, the app a file opens
+with, version info for programs, shortcut targets and what's inside zip archives.
 
 **Win+E** can open [File Pilot](https://filepilot.tech) instead of File Explorer.
 
@@ -60,8 +69,9 @@ Needs Rust and [Inno Setup 6](https://jrsoftware.org/isinfo.php).
 
 ## Privacy
 
-Everything stays on your PC. The only network request is the daily update check against this
-repo's GitHub releases (it can be turned off). Content search never reads online-only OneDrive
+Everything stays on your PC. The only network requests are the daily update check against this
+repo's GitHub releases (it can be turned off) and, when you press Enter on "Public IP", a
+lookup at api.ipify.org. Content search never reads online-only OneDrive
 files or files that typically hold secrets (`.env`, keys, password databases).
 
 ## License

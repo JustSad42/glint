@@ -14,7 +14,10 @@ const FILTERS = [
   { id: 'contents', label: 'In files', icon: 'filetext' },
   { id: 'windows', label: 'Windows', icon: 'window' },
   { id: 'actions', label: 'Commands', icon: 'bolt' },
+  { id: 'clipboard', label: 'Clipboard', icon: 'clipboard' },
 ];
+const tabs = () => FILTERS.filter((f) => f.id !== 'clipboard' || (S.settings.clipvault !== false && S.status?.clipvault));
+const fileSrc = (p) => window.__TAURI__.core.convertFileSrc(p);
 
 const S = {
   settings: {},
@@ -44,7 +47,7 @@ $('settingsBtn').onclick = () => call('open_settings', {});
 
 function renderTabs() {
   $('tabs').innerHTML =
-    FILTERS.map((f) => `<button class="tab ${S.filter === f.id ? 'on' : ''}" data-f="${f.id}">${glyph(f.icon, 14)}${f.label}</button>`).join('') +
+    tabs().map((f) => `<button class="tab ${S.filter === f.id ? 'on' : ''}" data-f="${f.id}">${glyph(f.icon, 14)}${f.label}</button>`).join('') +
     `<span class="spacer"></span><span class="tab-hint"><kbd>Tab</kbd> switch</span>`;
   $('tabs').querySelectorAll('.tab').forEach((b) => (b.onclick = () => setFilter(b.dataset.f)));
 }
@@ -58,8 +61,9 @@ function setFilter(f) {
 }
 
 function cycleFilter(dir) {
-  const i = FILTERS.findIndex((f) => f.id === S.filter);
-  setFilter(FILTERS[(i + dir + FILTERS.length) % FILTERS.length].id);
+  const list = tabs();
+  const i = list.findIndex((f) => f.id === S.filter);
+  setFilter(list[(i + dir + list.length) % list.length].id);
 }
 
 async function loadSettings() {
@@ -116,7 +120,7 @@ function render(r, q) {
 
 function renderMode() {
   const m = $('mode');
-  const label = { command: 'Command', kill: 'End process', web: 'Web search', path: 'Browse' }[S.mode];
+  const label = { command: 'Command', kill: 'End process', web: 'Web search', path: 'Browse', clip: 'Clipboard' }[S.mode];
   m.hidden = !label;
   m.textContent = label || '';
 }
@@ -158,30 +162,57 @@ function highlight(text, q) {
   return out;
 }
 
-const KIND_GLYPH = { app: 'app', file: 'file', folder: 'folder', content: 'filetext', window: 'window', process: 'activity', calc: 'calc', web: 'search', url: 'globe', command: 'terminal', action: 'bolt', color: 'palette', hint: 'info' };
-const KIND_BADGE = { app: 'App', window: 'Window', content: 'Match', action: 'Command', process: 'Process', folder: 'Folder' };
+const KIND_GLYPH = { app: 'app', file: 'file', folder: 'folder', content: 'filetext', window: 'window', process: 'activity', calc: 'calc', web: 'search', url: 'globe', command: 'terminal', action: 'bolt', color: 'palette', hint: 'info', toggle: 'sliders', info: 'info', layout: 'layout', media: 'play', clip: 'clipboard' };
+const KIND_BADGE = { app: 'App', window: 'Window', content: 'Match', action: 'Command', process: 'Process', folder: 'Folder', layout: 'Layout', clip: 'Clip' };
+const PINNABLE = ['app', 'file', 'folder', 'action', 'url', 'layout', 'toggle', 'command'];
 
 function iconHtml(it) {
   if (it.kind === 'color') return `<div class="ico swatch" style="background:${esc(it.swatch)}"></div>`;
   if (it.icon) return `<div class="ico"><img src="${esc(it.icon)}" loading="lazy" decoding="async" data-fallback="${esc(it.glyph || KIND_GLYPH[it.kind] || 'file')}" /></div>`;
-  const accent = ['calc', 'web', 'url', 'command'].includes(it.kind) ? 'accent' : '';
+  const accent = ['calc', 'web', 'url', 'command', 'toggle', 'info', 'layout', 'media'].includes(it.kind) ? 'accent' : '';
   return `<div class="ico glyphy ${accent}">${glyph(it.glyph || KIND_GLYPH[it.kind] || 'sparkle', 18)}</div>`;
 }
 
 function goLabel(it) {
   if (it.confirm && S.confirmKey === it.key) return 'Press again';
-  return { window: 'Switch', calc: 'Copy', color: 'Copy', process: 'End', web: 'Search', url: 'Open', command: 'Run', action: 'Run', hint: '' }[it.kind] ?? 'Open';
+  if (it.kind === 'media') return { toggle: it.playing ? 'Pause' : 'Play', next: 'Next', prev: 'Previous' }[it.op] || 'Play';
+  if (it.kind === 'info') return it.op === 'public_ip' ? 'Look up' : it.copy ? 'Copy' : '';
+  if (it.kind === 'clip') return S.settings.clip_paste === false ? 'Copy' : 'Paste';
+  return { window: 'Switch', calc: 'Copy', color: 'Copy', process: 'End', web: 'Search', url: 'Open', command: 'Run', action: 'Run', hint: '', toggle: 'Apply', layout: 'Apply' }[it.kind] ?? 'Open';
+}
+
+function mediaCardHtml(it, i) {
+  return `<div class="row media-card ${i === S.sel ? 'sel' : ''}" data-i="${i}">
+    <div class="cover"><img src="${esc(it.icon)}" onerror="this.parentElement.classList.add('none');this.remove()" />${glyph('play', 20)}</div>
+    <div class="txt"><div class="title">${esc(it.title)}</div><div class="sub">${esc(it.subtitle)}</div>
+      <div class="eq ${it.playing ? 'on' : ''}"><i></i><i></i><i></i><i></i></div></div>
+    <div class="mc-btns">
+      <button data-op="prev" title="Previous">${glyph('prev', 16)}</button>
+      <button data-op="toggle" class="main" title="${it.playing ? 'Pause' : 'Play'}">${glyph(it.playing ? 'pause' : 'play', 18)}</button>
+      <button data-op="next" title="Next">${glyph('next', 16)}</button>
+    </div>
+  </div>`;
+}
+
+function fileMeta(it) {
+  if (it.kind !== 'file' && it.kind !== 'folder') return '';
+  const parts = [];
+  if (it.kind === 'file' && it.size != null) parts.push(fmtSize(it.size));
+  if (it.mtime) parts.push(fmtShortDate(it.mtime));
+  return parts.length ? `<span class="fmeta">${esc(parts.join(' · '))}</span>` : '';
 }
 
 function rowHtml(it, i, q) {
+  if (it.key === 'media:now') return mediaCardHtml(it, i);
   const danger = it.confirm && S.confirmKey === it.key;
   const badge = it.recent ? 'Recent' : KIND_BADGE[it.kind];
   const titleHtml = it.kind === 'calc' ? esc(it.title) : highlight(it.title, q);
   const sub = danger ? `Press Enter again to confirm` : it.subtitle;
   return `<div class="row ${it.kind} ${i === S.sel ? 'sel' : ''} ${danger ? 'danger' : ''}" data-i="${i}">
     ${iconHtml(it)}
-    <div class="txt"><div class="title">${titleHtml}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
+    <div class="txt"><div class="title">${it.pinned ? `<span class="pinmark">${glyph('pin', 12)}</span>` : ''}${titleHtml}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>
     <div class="meta">
+      ${fileMeta(it)}
       ${badge && S.filter === 'all' ? `<span class="badge">${badge}</span>` : ''}
       ${i < 9 ? `<span class="num">Ctrl ${i + 1}</span>` : ''}
       <span class="go">${goLabel(it) ? `${esc(goLabel(it))} <kbd>↵</kbd>` : ''}</span>
@@ -198,6 +229,10 @@ const TIPS = [
   { q: '~\\', icon: 'folder', t1: 'Browse folders', t2: '<code>C:\\</code> <code>~\\Downloads</code>, Tab completes' },
   { q: '?', icon: 'globe', t1: 'Web search', t2: '<code>?rust traits</code>' },
   { q: '#7c6cff', icon: 'palette', t1: 'Colors', t2: '<code>#7c6cff</code> <code>rgb(…)</code>' },
+  { q: 'dm:week ', icon: 'clock', t1: 'Recent & big files', t2: '<code>dm:today</code> <code>size:>100mb</code>' },
+  { q: 'vol ', icon: 'sliders', t1: 'Quick toggles', t2: '<code>vol 40</code> <code>wifi off</code> <code>ip</code>' },
+  { q: 'left', icon: 'layout', t1: 'Snap a window', t2: '<code>left</code> <code>center</code> <code>next monitor</code>' },
+  { q: 'clip ', icon: 'clipboard', t1: 'Clipboard history', t2: '<code>clip invoice</code> from ClipVault' },
 ];
 
 function renderResults(q) {
@@ -229,6 +264,12 @@ function renderResults(q) {
     for (const it of s.items) html += rowHtml(it, i++, q);
   }
   resultsEl.innerHTML = html;
+  resultsEl.querySelectorAll('.mc-btns button').forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    const row = b.closest('.row');
+    const it = S.flat[+row.dataset.i];
+    runAction({ ...it, op: b.dataset.op }, { mode: 'default' });
+  }));
   resultsEl.querySelectorAll('img[data-fallback]').forEach((img) => {
     img.onerror = () => {
       const box = img.parentElement;
@@ -274,12 +315,16 @@ function updatePreview() {
   }
   renderPreview(it, null);
   previewTimer = setTimeout(async () => {
-    if (!['file', 'folder', 'content', 'app', 'window', 'process'].includes(it.kind)) return;
+    if (!['file', 'folder', 'content', 'app', 'window', 'process', 'action', 'url', 'layout', 'toggle', 'command'].includes(it.kind)) return;
     const key = it.key;
     S.detailsFor = key;
+    S.details = null;
     try {
       const d = await call('details', { item: it });
-      if (S.detailsFor === key && S.flat[S.sel]?.key === key) renderPreview(it, d);
+      if (S.detailsFor === key && S.flat[S.sel]?.key === key) {
+        S.details = d;
+        renderPreview(it, d);
+      }
     } catch {}
   }, 70);
 }
@@ -309,15 +354,41 @@ function markText(text, marks) {
   return out + esc(dec.decode(enc.slice(last)));
 }
 
+function mediaHero(d) {
+  const src = fileSrc(d.path);
+  if (d.media === 'image') return `<img class="pv-media" src="${esc(src)}" data-dims="1" onerror="this.remove()" />`;
+  if (d.media === 'video') return `<video class="pv-media" src="${esc(src)}" controls muted preload="metadata" data-dims="1"></video>`;
+  if (d.media === 'audio') return `<div class="pv-audio"><div class="pv-ico glyphy">${glyph('volume', 30)}</div><audio src="${esc(src)}" controls preload="metadata" data-dims="1"></audio></div>`;
+  return '';
+}
+
+function wireMedia() {
+  previewEl.querySelectorAll('[data-dims]').forEach((m) => {
+    const put = (txt) => {
+      const el = previewEl.querySelector('[data-fact="dims"]');
+      if (el && txt) { el.hidden = false; el.lastElementChild.textContent = txt; }
+    };
+    if (m.tagName === 'IMG') m.onload = () => put(`${m.naturalWidth} × ${m.naturalHeight}`);
+    else m.onloadedmetadata = () => put([m.videoWidth ? `${m.videoWidth} × ${m.videoHeight}` : '', fmtDuration(m.duration)].filter(Boolean).join(' · '));
+  });
+}
+
 function renderPreview(it, d) {
-  const acts = actionsFor(it).slice(0, 5);
+  const acts = actionsFor(it, d).slice(0, 5);
   let hero;
-  if (it.kind === 'calc') {
+  if (it.kind === 'clip') {
+    const img = it.image ? `<img class="pv-media" src="${esc(fileSrc(it.image))}" data-dims="1" onerror="this.remove()" />` : '';
+    hero = `${img}<div class="pv-kind">${esc(it.subtitle)}</div>`;
+    if (it.clipkind !== 'Image' && it.text) hero += `<div class="pv-text clip">${esc(it.text)}</div>`;
+    hero += img ? `<div class="pv-facts"><div class="pv-fact" data-fact="dims" hidden><span>Size</span><span></span></div></div>` : '';
+  } else if (it.key === 'media:now') {
+    hero = `<div class="pv-hero"><div class="pv-cover"><img src="${esc(it.icon)}" onerror="this.parentElement.classList.add('none');this.remove()" />${glyph('play', 36)}</div><div class="pv-name">${esc(it.title)}</div><div class="pv-kind">${esc(it.subtitle)}</div></div>`;
+  } else if (it.kind === 'calc') {
     hero = `<div class="pv-calc">${esc(it.title)}</div><div class="pv-kind" style="text-align:center">${esc(it.subtitle)}</div>`;
   } else if (it.kind === 'color') {
     hero = `<div class="pv-swatch" style="background:${esc(it.swatch)}"></div><div class="pv-name">${esc(it.title)}</div><div class="pv-facts">${(it.alts || []).map((a, i) => fact(['Hex', 'RGB', 'HSL'][i], a)).join('')}</div>`;
   } else {
-    const big = d?.thumb ? `<img class="pv-thumb" src="${esc(d.thumb)}" onerror="this.remove()" />` : '';
+    const big = d?.media ? mediaHero(d) : d?.thumb ? `<img class="pv-thumb" src="${esc(d.thumb)}" onerror="this.remove()" />` : '';
     const ico = it.icon ? `<div class="pv-ico"><img src="${esc(it.icon)}" onerror="this.parentElement.classList.add('glyphy');this.outerHTML=glyph('${KIND_GLYPH[it.kind] || 'file'}',32)" /></div>`
       : `<div class="pv-ico glyphy">${glyph(it.glyph || KIND_GLYPH[it.kind] || 'sparkle', 30)}</div>`;
     const kindName = { app: 'Application', file: 'File', folder: 'Folder', content: 'Text match', window: 'Open window', process: 'Running process', action: 'Command', web: 'Web search', url: 'Website', command: 'PowerShell command' }[it.kind] || '';
@@ -331,26 +402,49 @@ function renderPreview(it, d) {
     if (d.is_dir && d.count != null) facts.push(fact('Items', d.count >= 400 ? '400+' : String(d.count)));
     facts.push(fact('Modified', fmtDate(d.modified)));
     if (d.created) facts.push(fact('Created', fmtDate(d.created)));
+    if (d.media) facts.push(`<div class="pv-fact" data-fact="dims" hidden><span>${d.media === 'image' ? 'Dimensions' : d.media === 'audio' ? 'Length' : 'Video'}</span><span></span></div>`);
+    if (d.version?.description) facts.push(fact('Description', d.version.description));
+    if (d.version?.company) facts.push(fact('Publisher', d.version.company));
+    if (d.version?.version) facts.push(fact('Version', d.version.version));
+    if (d.target) facts.push(fact('Target', prettyPath(d.target)));
+    if (d.opens_with) facts.push(fact('Opens with', d.opens_with));
+    if (d.archive) facts.push(fact('Contains', `${fmtCount(d.archive.count)} items · ${fmtSize(d.archive.unpacked)} unpacked`));
     if (d.pretty) facts.push(fact('Where', d.pretty));
+    if (d.keywords?.length) facts.push(fact('Keyword', d.keywords.join(', ')));
     if ((it.kind === 'app' || it.kind === 'window' || it.kind === 'process') && d.path) facts.push(fact('Program', prettyPath(d.path)));
     if (facts.join('')) body += `<div class="pv-facts">${facts.join('')}</div>`;
     if (d.snippet?.text) body += `<div class="pv-text pv-snippet">${markText(d.snippet.text, d.snippet.marks)}</div>`;
     else if (d.text) body += `<div class="pv-text">${esc(d.text)}</div>`;
+    if (d.archive?.entries?.length) body += `<div class="pv-children">${d.archive.entries.map((c) => `<div class="pv-child">${glyph(c.dir ? 'folder' : 'file', 14)}${esc(c.name)}</div>`).join('')}</div>`;
     if (d.children?.length) body += `<div class="pv-children">${d.children.map((c) => `<div class="pv-child">${glyph(c.dir ? 'folder' : 'file', 14)}${esc(c.name)}</div>`).join('')}</div>`;
-  } else if (it.subtitle && !['calc', 'color'].includes(it.kind)) {
+  } else if (it.subtitle && !['calc', 'color', 'clip'].includes(it.kind) && it.key !== 'media:now') {
     body += `<div class="pv-facts">${fact(it.kind === 'file' || it.kind === 'folder' || it.kind === 'content' ? 'Where' : 'Details', it.subtitle)}</div>`;
   }
   const actHtml = acts.length > 1
     ? `<div class="pv-actions">${acts.map((a, i) => `<button class="pv-act ${a.danger ? 'danger' : ''}" data-a="${i}">${glyph(a.icon, 15)}${esc(a.label)}${a.keys ? `<span class="keys" style="margin-left:auto;display:flex;gap:3px">${a.keys.map((k) => `<kbd>${k}</kbd>`).join('')}</span>` : ''}</button>`).join('')}</div>`
     : '';
+  previewEl.querySelectorAll('video,audio').forEach((m) => m.pause());
   previewEl.innerHTML = hero + body + actHtml;
+  wireMedia();
   previewEl.querySelectorAll('.pv-act').forEach((b) => (b.onclick = () => runAction(it, acts[+b.dataset.a])));
 }
 
 // ------------------------------------------------------------------ actions
 const RUNNABLE = ['exe', 'bat', 'cmd', 'ps1', 'msi', 'lnk', 'com'];
 
-function actionsFor(it) {
+function actionsFor(it, d = it.key === S.detailsFor ? S.details : null) {
+  const base = baseActions(it);
+  if (!PINNABLE.includes(it.kind)) return base;
+  const A = (label, icon, mode, keys, extra = {}) => ({ label, icon, mode, keys, ...extra });
+  const pinned = d ? d.pinned : it.pinned;
+  const extra = [pinned ? A('Unpin', 'pin', 'unpin', ['Ctrl', 'Shift', 'P']) : A('Pin to top', 'pin', 'pin', ['Ctrl', 'Shift', 'P']), A('Add keyword…', 'tag', 'keyword-prompt', [])];
+  for (const w of d?.keywords || []) extra.push(A(`Remove keyword “${w}”`, 'eraser', `unkeyword:${w}`, []));
+  // keep the dangerous/forget entries last
+  const tail = base.filter((a) => a.danger || a.mode === 'forget');
+  return [...base.filter((a) => !tail.includes(a)), ...extra, ...tail];
+}
+
+function baseActions(it) {
   const ext = (it.path || '').split('.').pop().toLowerCase();
   const fp = S.settings.folder_opener === 'filepilot';
   const A = (label, icon, mode, keys, extra = {}) => ({ label, icon, mode, keys, ...extra });
@@ -408,6 +502,20 @@ function actionsFor(it) {
       return [A('Open in browser', 'globe', 'default', ['↵'])];
     case 'action':
       return [A('Run', 'bolt', 'default', ['↵']), ...recent];
+    case 'toggle':
+      return [A('Apply', it.glyph || 'sliders', 'default', ['↵'])];
+    case 'info':
+      return it.copy || it.op ? [A(it.op === 'public_ip' ? 'Look up and copy' : 'Copy', 'copy', 'default', ['↵'])] : [];
+    case 'layout':
+      return [A('Apply to window', 'layout', 'default', ['↵'])];
+    case 'media':
+      return it.key === 'media:now'
+        ? [A(it.playing ? 'Pause' : 'Play', it.playing ? 'pause' : 'play', 'default', ['↵']), A('Next track', 'next', 'media-next', []), A('Previous track', 'prev', 'media-prev', [])]
+        : [A(goLabel(it), it.glyph || 'play', 'default', ['↵'])];
+    case 'clip':
+      return S.settings.clip_paste === false
+        ? [A('Copy to clipboard', 'copy', 'copy', ['↵'])]
+        : [A('Paste into window', 'clipboard', 'default', ['↵']), A('Copy only', 'copy', 'copy', ['Ctrl', '↵'])];
     default:
       return [];
   }
@@ -424,6 +532,11 @@ function toast(msg, err = false) {
 
 async function runAction(it, act) {
   if (!it || !act) return;
+  if (act.mode === 'keyword-prompt') return keywordPrompt(it);
+  if (act.mode === 'media-next' || act.mode === 'media-prev') {
+    it = { ...it, op: act.mode.slice(6) };
+    act = { mode: 'default' };
+  }
   closeMenu();
   // dangerous things ask twice: first Enter arms, second runs
   const needsConfirm = (it.confirm && act.mode === 'default') || act.mode === 'recycle';
@@ -441,7 +554,10 @@ async function runAction(it, act) {
     if (r?.hide) {
       hide();
     } else if (r?.refresh) {
+      S.detailsFor = null;
       search(true);
+      // the player takes a moment to report its new state
+      if (it.kind === 'media') setTimeout(() => search(true), 450);
     }
   } catch (e) {
     if (String(e) !== 'Cancelled') toast(String(e), true);
@@ -467,6 +583,26 @@ function openMenu() {
   if (!items.length) return;
   S.menu = { items, sel: 0, item: it };
   renderMenu();
+}
+
+function keywordPrompt(it) {
+  S.menu = { items: [], sel: 0, item: it, input: true };
+  menuEl.hidden = false;
+  menuEl.innerHTML = `<div class="menu-head">Keyword for ${esc(it.title)}</div>
+    <div class="kw-box">${glyph('tag', 16)}<input id="kwInput" placeholder="e.g. ${esc((it.title || '').split(/\s+/)[0].toLowerCase().slice(0, 6) || 'word')}" spellcheck="false" maxlength="24" /></div>
+    <div class="kw-help">Type it in Glint and this comes first. <kbd>↵</kbd> save · <kbd>Esc</kbd> cancel</div>`;
+  const inp = $('kwInput');
+  inp.focus();
+  inp.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const w = inp.value.trim();
+      if (!w) return closeMenu();
+      runAction(it, { mode: `keyword:${w}` });
+    }
+  };
 }
 
 function closeMenu() {
@@ -601,7 +737,7 @@ document.addEventListener('keydown', (e) => {
   if (k === 'Enter') {
     e.preventDefault();
     if (e.altKey) activate('properties');
-    else if (ctrl) activate('reveal');
+    else if (ctrl) activate(S.flat[S.sel]?.kind === 'clip' ? 'copy' : 'reveal');
     else if (e.shiftKey) activate('admin');
     else activate('default');
     return;
@@ -609,7 +745,7 @@ document.addEventListener('keydown', (e) => {
   if (k === 'ArrowRight' && qEl.selectionStart === qEl.value.length && S.flat[S.sel]) { e.preventDefault(); openMenu(); renderFooter(); return; }
   if (ctrl && k.toLowerCase() === 'k') { e.preventDefault(); openMenu(); renderFooter(); return; }
   if (ctrl && k === ',') { e.preventDefault(); call('open_settings', {}); return; }
-  if (ctrl && k.toLowerCase() === 'p') {
+  if (ctrl && !e.shiftKey && k.toLowerCase() === 'p') {
     e.preventDefault();
     S.settings.show_preview = !S.settings.show_preview;
     shellEl.classList.toggle('no-preview', !S.settings.show_preview);
@@ -628,8 +764,15 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     const it = S.flat[S.sel];
     if (e.shiftKey) activate('copy-file');
-    else if (it.kind === 'calc' || it.kind === 'color') activate('default');
+    else if (it.kind === 'calc' || it.kind === 'color' || it.kind === 'info') activate('default');
+    else if (it.kind === 'clip') activate('copy');
     else if (it.path || it.lnk) activate('copy-path');
+    return;
+  }
+  if (ctrl && e.shiftKey && k.toLowerCase() === 'p' && S.flat[S.sel]) {
+    e.preventDefault();
+    const it = S.flat[S.sel];
+    if (PINNABLE.includes(it.kind)) activate(actionsFor(it).find((a) => a.mode === 'pin' || a.mode === 'unpin')?.mode);
     return;
   }
   if (ctrl && k.toLowerCase() === 'o') { e.preventDefault(); activate('open-with'); return; }
@@ -679,10 +822,11 @@ listen('launcher-shown', async () => {
   qEl.select();
   S.historyIdx = -1;
   search(true);
-  refreshStatus();
+  refreshStatus().then(renderTabs);
   call('queries').then((q) => (S.queryHistory = q || [])).catch(() => {});
 });
 listen('launcher-hidden', () => {
+  previewEl.querySelectorAll('video,audio').forEach((m) => m.pause());
   S.hiddenAt = Date.now();
   S.confirmKey = null;
 });
@@ -697,7 +841,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => appl
 (async () => {
   renderTabs();
   await loadSettings();
-  refreshStatus();
+  refreshStatus().then(renderTabs);
   search(true);
   qEl.focus();
 })();

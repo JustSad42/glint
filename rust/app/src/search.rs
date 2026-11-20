@@ -2,7 +2,7 @@
 //! web. Special prefixes switch modes:
 //!   >cmd      run a command in PowerShell        kill name   end a process
 //!   ?words    search the web                     C:\path     browse folders (Tab completes)
-use crate::{actions, apps, calc, content, files, history, icons, settings, shellops, wins};
+use crate::{actions, apps, calc, clipvault, content, files, history, icons, media, pins, preview, settings, shellops, sysinfo, winmgmt, wins};
 use glint_core::query::Kind;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -214,6 +214,26 @@ pub fn run(input: &str, filter: &str) -> Value {
                 Some(it)
             })
             .collect();
+        let pinned: Vec<Value> = pins::pinned()
+            .into_iter()
+            .map(|mut it| {
+                it["pinned"] = json!(true);
+                it
+            })
+            .collect();
+        if !pinned.is_empty() && filter == "all" {
+            sections.push((0, section("Pinned", pinned)));
+        }
+        if s.media_controls && filter == "all" {
+            let m = media::rows("", true);
+            if !m.is_empty() {
+                sections.push((0, section("Now playing", m)));
+            }
+        }
+        if filter == "clipboard" {
+            let c = strip(clipvault::search("", 60));
+            return json!({"sections": [section("Clipboard history", c)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "clip"});
+        }
         if !recent.is_empty() {
             sections.push((0, section("Recent", recent)));
         }
@@ -234,6 +254,10 @@ pub fn run(input: &str, filter: &str) -> Value {
         };
         return json!({"sections": [section("Command", items)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "command"});
     }
+    if let Some(rest) = q.strip_prefix("clip ").or_else(|| q.strip_prefix("cb ")).or_else(|| (filter == "clipboard").then_some(q)) {
+        let items = strip(clipvault::search(rest, 60));
+        return json!({"sections": [section("Clipboard history", items)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "clip"});
+    }
     if let Some(rest) = q.strip_prefix("kill ").or_else(|| (q == "kill").then_some("")) {
         let items = strip(wins::search_processes(rest, 30));
         return json!({"sections": [section("Processes", items)], "ms": t.elapsed().as_millis() as u64, "live": true, "mode": "kill"});
@@ -251,6 +275,21 @@ pub fn run(input: &str, filter: &str) -> Value {
     // a calculation or color code isn't something to look for in files
     let mut special = false;
     if all {
+        let kw = pins::keyword_hits(q);
+        if !kw.is_empty() {
+            sections.push((200_000, section("Keyword", kw)));
+        }
+        let quick = sysinfo::rows(q);
+        if !quick.is_empty() {
+            special = quick.iter().any(|r| r["score"].as_i64().unwrap_or(0) >= 5000);
+            sections.push((150_000, section("Quick", quick)));
+        }
+        if s.media_controls {
+            let m = media::rows(q, false);
+            if !m.is_empty() {
+                sections.push((140_000, section("Media", m)));
+            }
+        }
         if let Some(c) = calc::evaluate(q) {
             special = true;
             sections.push((
@@ -292,6 +331,10 @@ pub fn run(input: &str, filter: &str) -> Value {
     }
     if all || filter == "actions" {
         push("Commands", -40, actions::search(q, if all { 4 } else { 30 }));
+        push("Window layout", -60, winmgmt::search(q, if all { 3 } else { 20 }));
+    }
+    if all && s.clipvault && q.chars().count() >= 3 && clipvault::available() {
+        push("Clipboard history", -260, clipvault::search(q, 3));
     }
     if !special && (all || filter == "files" || filter == "folders") {
         let kind = match filter {
@@ -303,9 +346,33 @@ pub fn run(input: &str, filter: &str) -> Value {
         live = l;
         push(if filter == "folders" { "Folders" } else { "Files & folders" }, 0, v);
     }
-    if !special && s.content_search && (all || filter == "contents") {
-        let v = content::search(q, if all { 5 } else { 30 });
+    // date/size filters only apply to names; the words around them still search contents
+    let words: String = q
+        .split_whitespace()
+        .filter(|w| !["dm:", "modified:", "date:", "size:"].iter().any(|p| w.to_lowercase().starts_with(p)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !special && !words.is_empty() && s.content_search && (all || filter == "contents") {
+        let v = content::search(&words, if all { 5 } else { 30 });
         push("In file contents", -150, v);
+    }
+    // pinned items jump to the top of their section, and their section moves up with them
+    for (best, sec) in sections.iter_mut() {
+        if let Some(items) = sec["items"].as_array_mut() {
+            let mut bumped = false;
+            for it in items.iter_mut() {
+                if pins::is_pinned(it["key"].as_str().unwrap_or("")) {
+                    let sc = it["score"].as_i64().unwrap_or(0) + 1500;
+                    it["score"] = json!(sc);
+                    it["pinned"] = json!(true);
+                    *best = (*best).max(sc as i32);
+                    bumped = true;
+                }
+            }
+            if bumped {
+                items.sort_by(|a, b| b["pinned"].as_bool().unwrap_or(false).cmp(&a["pinned"].as_bool().unwrap_or(false)));
+            }
+        }
     }
     sections.sort_by(|a, b| b.0.cmp(&a.0));
     let mut out: Vec<Value> = sections.into_iter().map(|(_, v)| v).collect();
@@ -346,6 +413,7 @@ pub fn details(item: &Value) -> Value {
         }
         d["path"] = json!(path);
         d["pretty"] = json!(files::pretty_dir(path));
+        preview::extra(path, &mut d);
         let ext = crate::extract::ext_of(p);
         const THUMBS: &[&str] = &[
             "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "heic", "avif", "ico", "mp4", "mkv", "mov", "avi", "webm", "wmv", "pdf", "psd", "svg", "jfif",
@@ -380,7 +448,15 @@ pub fn details(item: &Value) -> Value {
         }
     } else if kind == "window" || kind == "process" {
         d["path"] = item["path"].clone();
+    } else if kind == "clip" {
+        if let Some(img) = item["image"].as_str() {
+            d["image"] = json!(img);
+            d["media"] = json!("image");
+        }
     }
+    let key = item["key"].as_str().unwrap_or("");
+    d["pinned"] = json!(pins::is_pinned(key));
+    d["keywords"] = json!(pins::keywords_for(key));
     d
 }
 

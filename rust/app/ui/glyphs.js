@@ -61,6 +61,14 @@ const GLYPHS = {
   history: '<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5M12 8v4l2.5 2"/>',
   sparkle: '<path d="M12 4c.4 3.8 2.2 5.6 6 6-3.8.4-5.6 2.2-6 6-.4-3.8-2.2-5.6-6-6 3.8-.4 5.6-2.2 6-6Z"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  clipboard: '<rect x="6" y="4.5" width="12" height="16" rx="2.5"/><path d="M9.5 4.5V3.5h5v1"/><path d="M9.5 10h5M9.5 13.5h5M9.5 17h3"/>',
+  play: '<path d="M8 5.5v13l10.5-6.5Z"/>',
+  pause: '<path d="M8.5 5.5v13M15.5 5.5v13"/>',
+  next: '<path d="M6 5.5v13l9-6.5Z"/><path d="M18 5.5v13"/>',
+  prev: '<path d="M18 5.5v13l-9-6.5Z"/><path d="M6 5.5v13"/>',
+  tag: '<path d="M3.5 12.5V4.5a1 1 0 0 1 1-1h8l8 8-9 9Z"/><circle cx="8.5" cy="8.5" r="1.5"/>',
+  film: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 4.5v15M16.5 4.5v15M3.5 9.5h4M3.5 14.5h4M16.5 9.5h4M16.5 14.5h4"/>',
+  archive: '<rect x="3.5" y="4" width="17" height="4.5" rx="1"/><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"/><path d="M10 12.5h4"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4 18 5-5 4 4 2.5-2.5L20 19"/>',
 };
 
@@ -104,6 +112,22 @@ function fmtDate(secs) {
   if (diff < 86400 && d.getDate() === now.getDate()) return `Today, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
   if (diff < 172800) return `Yesterday, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
   return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function fmtDuration(s) {
+  if (!isFinite(s)) return '';
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  return (h ? `${h}:${String(m).padStart(2, '0')}` : `${m}`) + `:${String(x).padStart(2, '0')}`;
+}
+
+function fmtShortDate(secs) {
+  if (!secs) return '';
+  const d = new Date(secs * 1000);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString([], { year: 'numeric', month: 'short' });
 }
 
 function fmtCount(n) {

@@ -66,6 +66,12 @@ pub struct Settings {
     pub web_engine: String,
     pub web_fallback: bool,
     pub max_files: usize,
+    /// now-playing card and play/pause/next rows
+    pub media_controls: bool,
+    /// search ClipVault's clipboard history
+    pub clipvault: bool,
+    /// Enter on a clip pastes it into the window you came from (not just copies it)
+    pub clip_paste: bool,
     pub first_run_done: bool,
 }
 
@@ -93,6 +99,9 @@ impl Default for Settings {
             web_engine: "google".into(),
             web_fallback: true,
             max_files: 8,
+            media_controls: true,
+            clipvault: true,
+            clip_paste: true,
             first_run_done: false,
         }
     }

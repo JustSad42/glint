@@ -179,3 +179,5 @@ a.link:hover { text-decoration: underline; }
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
 .toast .glyph { color: var(--ok); }
 .toast.err .glyph { color: var(--danger); }
+
+.li code.kw { font-family: var(--mono); font-size: 12px; color: var(--accent); background: color-mix(in oklab, var(--accent) 14%, transparent); padding: 2px 8px; border-radius: 6px; flex: none; }
