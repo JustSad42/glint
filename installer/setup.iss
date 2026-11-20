@@ -79,6 +79,8 @@ begin
     Exec(OldIndexer, '--stop', '', SW_HIDE, ewWaitUntilTerminated, Code)
   else
     Exec(ExpandConstant('{sys}\sc.exe'), 'stop GlintIndexer', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  // keep the watchdog from restarting Glint while files are replaced; --setup turns it back on
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Change /TN "Glint Watchdog" /Disable', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Sleep(800);
   Result := '';

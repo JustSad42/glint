@@ -174,6 +174,7 @@ fn open_settings(app: &AppHandle, section: &str) {
 
 fn quit(app: &AppHandle) {
     QUITTING.store(true, Ordering::SeqCst);
+    let _ = std::fs::write(settings::quit_marker(), b"quit by user");
     hook::stop();
     app.exit(0);
 }
@@ -595,6 +596,13 @@ fn main() {
         settings::set_autostart(false);
         return;
     }
+    // the watchdog task starts us every few minutes; stay quit if you quit on purpose
+    if has("--watchdog") && settings::quit_marker().exists() {
+        return;
+    }
+    if !has("--watchdog") && !has("--quit") {
+        let _ = std::fs::remove_file(settings::quit_marker());
+    }
     let tray_start = has("--tray");
     // with another copy running, the single-instance plugin hands it "--quit" and this process
     // ends; otherwise there is nothing to quit
@@ -635,6 +643,14 @@ fn main() {
             let _ = APP.set(handle.clone());
             let s = settings::load();
             hook::apply(&s);
+            if s.start_with_windows {
+                // put start-with-Windows back if something removed it (or after an update)
+                std::thread::spawn(|| {
+                    if !settings::autostart_ok() {
+                        settings::set_autostart(true);
+                    }
+                });
+            }
 
             // keyboard hook -> show / Win+E
             let (tx, rx) = crossbeam_channel::unbounded();
