@@ -4,6 +4,8 @@ A fast launcher and search for Windows, written in Rust. Tap the **Windows key**
 every file and folder on your drives, the words inside your documents, open windows, Windows
 settings, a calculator and more, all in one box.
 
+![Glint: type "vs" and get the app, folders and files, with details in the preview pane](docs/screenshots/search.png)
+
 ## Why it's faster than Windows Search
 
 - **Every file name is already in memory.** A small background service reads each NTFS drive's
@@ -13,6 +15,15 @@ settings, a calculator and more, all in one box.
   offered at the bottom, and only opens your browser if you pick it.
 - **It learns.** What you open ranks higher next time, and the item you chose after typing
   "ch" comes first the next time you type "ch".
+
+## How it works
+
+| | |
+|---|---|
+| ![Searching "invoice" lists files, folders and text matches](docs/screenshots/files.png) | ![The actions menu for a file](docs/screenshots/actions.png) |
+| **1. Type a few letters.** Files, folders and words inside documents come back in milliseconds, with size, date and a preview. | **2. Press → (or right-click) for actions.** Quick Look, show in folder, copy path, open with, terminal here, pin, global shortcut. |
+| ![biggest ~\Downloads shows folder sizes as bars](docs/screenshots/biggest.png) | ![10 km to mi converted in the box](docs/screenshots/calc.png) |
+| **3. Find what takes the space.** `biggest ~\Downloads` ranks folders and files by size; Tab looks inside. | **4. Calculate and convert.** Math, units, colors and quick toggles answer right in the box; Enter copies. |
 
 ## What it does
 
