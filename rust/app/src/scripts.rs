@@ -148,8 +148,8 @@ pub fn run_hidden(path: &str, args: &str, done: impl FnOnce(Result<String, Strin
         done(match r {
             Err(e) => Err(format!("{name}: couldn't start ({e})")),
             Ok(o) => {
-                let text = String::from_utf8_lossy(if o.status.success() { &o.stdout } else if o.stderr.is_empty() { &o.stdout } else { &o.stderr }).into_owned();
-                let last = text.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or("").chars().take(160).collect::<String>();
+                let text = String::from_utf8_lossy(if o.status.success() || o.stderr.is_empty() { &o.stdout } else { &o.stderr }).into_owned();
+                let last = text.lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or("").chars().take(160).collect::<String>();
                 if o.status.success() {
                     Ok(if last.is_empty() { format!("{name} finished") } else { last })
                 } else {

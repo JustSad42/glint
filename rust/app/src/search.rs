@@ -1,7 +1,7 @@
 //! One keystroke -> ranked sections: calculator, apps, windows, commands, files, file contents,
 //! web. Special prefixes switch modes:
 //!   >cmd      run a command in PowerShell        kill name   end a process
-//!   ?words    search the web                     C:\path     browse folders (Tab completes)
+//! > ?words    search the web                     C:\path     browse folders (Tab completes)
 use crate::{actions, apps, audio, browser, calc, clipvault, content, files, history, icons, media, pins, preview, quick, scripts, settings, shellops, sysinfo, timers, winmgmt, wins};
 use glint_core::query::Kind;
 use serde_json::{json, Value};
@@ -91,14 +91,13 @@ fn color(input: &str) -> Option<Value> {
             6 | 8 => (u8::from_str_radix(&h[0..2], 16).ok()?, u8::from_str_radix(&h[2..4], 16).ok()?, u8::from_str_radix(&h[4..6], 16).ok()?),
             _ => return None,
         }
-    } else if let Some(inner) = s.strip_prefix("rgb(").or_else(|| s.strip_prefix("rgba(")).and_then(|x| x.strip_suffix(')')) {
+    } else {
+        let inner = s.strip_prefix("rgb(").or_else(|| s.strip_prefix("rgba(")).and_then(|x| x.strip_suffix(')'))?;
         let v: Vec<u8> = inner.split([',', ' ', '/']).filter(|x| !x.is_empty()).take(3).filter_map(|x| x.trim().parse().ok()).collect();
         if v.len() != 3 {
             return None;
         }
         (v[0], v[1], v[2])
-    } else {
-        return None;
     };
     let hex = format!("#{r:02X}{g:02X}{b:02X}");
     let (rf, gf, bf) = (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0);
@@ -510,33 +509,6 @@ pub fn details(item: &Value) -> Value {
     d
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn urls() {
-        assert_eq!(as_url("github.com/foo").as_deref(), Some("https://github.com/foo"));
-        assert_eq!(as_url("https://x.y/z").as_deref(), Some("https://x.y/z"));
-        assert_eq!(as_url("localhost:3000").as_deref(), Some("http://localhost:3000"));
-        assert!(as_url("notes.md").is_none());
-        assert!(as_url("report.pdf").is_none());
-        assert!(as_url("hello world.com").is_none());
-    }
-
-    #[test]
-    fn colors_and_paths() {
-        assert_eq!(color("#f80").unwrap()["title"], "#FF8800");
-        assert_eq!(color("rgb(255, 136, 0)").unwrap()["title"], "#FF8800");
-        assert!(color("#xyz").is_none());
-        assert!(looks_like_path(r"C:\Users"));
-        assert!(looks_like_path("c:"));
-        assert!(looks_like_path("~\\Downloads"));
-        assert!(looks_like_path("%appdata%"));
-        assert!(!looks_like_path("chrome"));
-    }
-}
-
 /// "biggest [folder]": what takes the space, from the indexer's folder totals.
 fn biggest(arg: &str, t: Instant) -> Value {
     let home = settings::user_home().to_string_lossy().into_owned();
@@ -571,5 +543,32 @@ fn biggest(arg: &str, t: Instant) -> Value {
                 .collect();
             done(format!("Biggest in {} · {}", files::pretty_dir(path.trim_end_matches('\\')), files::human(total)), items)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn urls() {
+        assert_eq!(as_url("github.com/foo").as_deref(), Some("https://github.com/foo"));
+        assert_eq!(as_url("https://x.y/z").as_deref(), Some("https://x.y/z"));
+        assert_eq!(as_url("localhost:3000").as_deref(), Some("http://localhost:3000"));
+        assert!(as_url("notes.md").is_none());
+        assert!(as_url("report.pdf").is_none());
+        assert!(as_url("hello world.com").is_none());
+    }
+
+    #[test]
+    fn colors_and_paths() {
+        assert_eq!(color("#f80").unwrap()["title"], "#FF8800");
+        assert_eq!(color("rgb(255, 136, 0)").unwrap()["title"], "#FF8800");
+        assert!(color("#xyz").is_none());
+        assert!(looks_like_path(r"C:\Users"));
+        assert!(looks_like_path("c:"));
+        assert!(looks_like_path("~\\Downloads"));
+        assert!(looks_like_path("%appdata%"));
+        assert!(!looks_like_path("chrome"));
     }
 }

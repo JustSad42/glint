@@ -113,7 +113,7 @@ fn enumerate() -> Result<Vec<App>, String> {
             let store = id.contains('!') && !id.contains('\\');
             out.push(App { id, name, lnk: lnk.map(|p| p.to_string_lossy().into_owned()), target, store });
         }
-        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        out.sort_by_key(|a| a.name.to_lowercase());
         out.dedup_by(|a, b| a.id == b.id);
         Ok(out)
     }

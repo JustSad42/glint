@@ -96,12 +96,11 @@ fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
                 hide_launcher(&app2);
             }
         }
-        WindowEvent::CloseRequested { api, .. } => {
-            if !QUITTING.load(Ordering::SeqCst) {
+        WindowEvent::CloseRequested { api, .. }
+            if !QUITTING.load(Ordering::SeqCst) => {
                 api.prevent_close();
                 hide_launcher(&app2);
             }
-        }
         _ => {}
     });
     Ok(w)

@@ -521,7 +521,7 @@ impl VolumeIndex {
                     if !ok {
                         continue;
                     }
-                    if n_plain < finders.len() && (found[n_plain..].iter().any(|&p| p == usize::MAX)) {
+                    if n_plain < finders.len() && found[n_plain..].contains(&usize::MAX) {
                         continue;
                     }
                     if !paths.is_empty() {

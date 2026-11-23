@@ -251,7 +251,7 @@ fn parse_records(buf: &[u8], mut f: impl FnMut(RawRec, u32)) {
             let name_len = u16::from_le_bytes(r[56..58].try_into().unwrap()) as usize;
             let name_off = u16::from_le_bytes(r[58..60].try_into().unwrap()) as usize;
             if name_off + name_len <= len {
-                let units: Vec<u16> = r[name_off..name_off + name_len].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+                let units: Vec<u16> = r[name_off..name_off + name_len].as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
                 f(RawRec { frn, parent, name: String::from_utf16_lossy(&units), attrs }, reason);
             }
         }

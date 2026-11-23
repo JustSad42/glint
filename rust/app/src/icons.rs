@@ -217,8 +217,8 @@ fn bitmap_to_png(hbm: HBITMAP) -> Option<Vec<u8>> {
         if lines == 0 {
             return None;
         }
-        let has_alpha = px.chunks_exact(4).any(|p| p[3] != 0);
-        for p in px.chunks_exact_mut(4) {
+        let has_alpha = px.as_chunks::<4>().0.iter().any(|p| p[3] != 0);
+        for p in px.as_chunks_mut::<4>().0 {
             let (b, g, r, a) = (p[0], p[1], p[2], p[3]);
             if !has_alpha {
                 p.copy_from_slice(&[r, g, b, 255]);

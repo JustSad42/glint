@@ -68,7 +68,7 @@ fn parse_size(s: &str) -> Option<u64> {
         "t" | "tb" | "tib" => 1024f64.powi(4),
         _ => return None,
     };
-    (n >= 0.0).then(|| (n * mult) as u64)
+    (n >= 0.0).then_some((n * mult) as u64)
 }
 
 /// size:>1gb  size:<10mb  size:1mb..5mb  size:empty  size:large  size:huge

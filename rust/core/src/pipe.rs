@@ -36,7 +36,7 @@ pub fn serve(name: &str, handle: Arc<dyn Fn(&str) -> String + Send + Sync>, stop
         lpSecurityDescriptor: sd.0,
         bInheritHandle: false.into(),
     };
-    let result = (|| {
+    let result = {
         while !stop.load(Ordering::SeqCst) {
             let h = unsafe {
                 CreateNamedPipeW(
@@ -88,7 +88,7 @@ pub fn serve(name: &str, handle: Arc<dyn Fn(&str) -> String + Send + Sync>, stop
             });
         }
         Ok(())
-    })();
+    };
     unsafe {
         let _ = LocalFree(Some(HLOCAL(sd.0)));
     }
