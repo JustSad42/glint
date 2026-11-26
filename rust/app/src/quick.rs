@@ -129,7 +129,8 @@ pub fn start_home() -> Value {
     })
 }
 
-/// Files Windows lists as recently opened (newest first), skipping ones that are gone.
+/// Files Windows lists as recently opened (newest first), skipping network files and ones that
+/// are gone.
 pub fn recent_files(n: usize) -> Vec<Value> {
     let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) else { return vec![] };
     let dir = appdata.join(r"Microsoft\Windows\Recent");
@@ -138,7 +139,7 @@ pub fn recent_files(n: usize) -> Vec<Value> {
     for (lnk, t) in links {
         let Some(target) = crate::apps::link_target(&lnk) else { continue };
         let tp = Path::new(&target);
-        if !tp.is_file() {
+        if files::is_remote(&target) || !tp.is_file() {
             continue;
         }
         if out.iter().any(|v: &Value| v["path"].as_str() == Some(target.as_str())) {

@@ -9,8 +9,27 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::path::Path;
+use windows::core::PCWSTR;
+use windows::Win32::Storage::FileSystem::GetDriveTypeW;
 
 static CLIENT: Lazy<Mutex<Client>> = Lazy::new(|| Mutex::new(Client::new(PIPE_NAME)));
+
+/// On another machine (a UNC path or a mapped network drive). Looking at one can stall for
+/// seconds, so nothing that runs as Glint opens may do it.
+pub fn is_remote(path: &str) -> bool {
+    if path.starts_with(r"\\") {
+        // \\?\C:\... is only a long local path
+        return !path.starts_with(r"\\?\") || path.starts_with(r"\\?\UNC\");
+    }
+    match path.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => {
+            let root = [*drive as u16, b':' as u16, b'\\' as u16, 0];
+            // 4 = DRIVE_REMOTE; Windows answers this without touching the network
+            unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) == 4 }
+        }
+        _ => false,
+    }
+}
 
 pub fn key(path: &str) -> String {
     format!("file:{}", path.to_lowercase())
@@ -98,4 +117,18 @@ pub fn search(input: &str, kind: Option<Kind>, limit: usize) -> (Vec<(i32, Value
     out.sort_by(|a, b| b.0.cmp(&a.0));
     out.truncate(limit);
     (out, live)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_remote;
+
+    #[test]
+    fn network_paths_are_remote() {
+        assert!(is_remote(r"\\server\share\a.txt"));
+        assert!(is_remote(r"\\?\UNC\server\share\a.txt"));
+        assert!(!is_remote(r"\\?\C:\a.txt"));
+        assert!(!is_remote(r"C:\Windows"));
+        assert!(!is_remote(""));
+    }
 }

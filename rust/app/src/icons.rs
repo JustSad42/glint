@@ -122,6 +122,11 @@ pub fn request(url_path: &str, reply: impl FnOnce(Option<Png>) + Send + 'static)
         "app" => (format!("shell:AppsFolder\\{rest}"), format!("app:{rest}"), 64, false, true),
         "thumb" => (rest.clone(), format!("thumb:{rest}"), 320, true, false),
         "path" => {
+            // this runs on the UI thread, so no icon for network files: the page draws a glyph
+            if crate::files::is_remote(&rest) {
+                reply(None);
+                return;
+            }
             let p = std::path::Path::new(&rest);
             let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
             let is_dir = p.is_dir();
