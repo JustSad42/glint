@@ -3,6 +3,7 @@
 //!   app/<AppsFolder id>   an installed app
 //!   path/<full path>      a file or folder (one icon per extension for ordinary files)
 //!   thumb/<full path>     a large thumbnail for the preview pane
+//!   big/<full path>       a bigger one for Quick Look
 //! Extraction runs on a few background STA threads; results are cached in memory, and app and
 //! file-type icons also on disk so the first screen after a restart is instant.
 use crate::settings;
@@ -55,7 +56,8 @@ static QUEUE: Lazy<Sender<Job>> = Lazy::new(|| {
                         continue;
                     }
                     let png = shell_image(&job.parsing, job.size, job.thumb).map(Arc::new);
-                    if let Some(p) = &png {
+                    // Quick Look's big thumbnails are shown once; don't keep megabytes of them
+                    if let Some(p) = png.as_ref().filter(|_| job.size <= 320) {
                         let mut c = CACHE.lock();
                         if c.len() > 4000 {
                             c.clear();
@@ -103,6 +105,11 @@ pub fn thumb_url(path: &str) -> String {
     format!("{BASE}/thumb/{}", urlencoding::encode(path))
 }
 
+/// A large thumbnail for Quick Look (videos, PDFs and pictures Glint can't decode itself).
+pub fn big_url(path: &str) -> String {
+    format!("{BASE}/big/{}", urlencoding::encode(path))
+}
+
 /// Answer one request for `/kind/key`. Calls `reply` exactly once (maybe from another thread).
 pub fn request(url_path: &str, reply: impl FnOnce(Option<Png>) + Send + 'static) {
     let url_path = url_path.trim_start_matches('/');
@@ -121,7 +128,13 @@ pub fn request(url_path: &str, reply: impl FnOnce(Option<Png>) + Send + 'static)
     let (parsing, key, size, thumb, disk) = match kind {
         "app" => (format!("shell:AppsFolder\\{rest}"), format!("app:{rest}"), 64, false, true),
         "thumb" => (rest.clone(), format!("thumb:{rest}"), 320, true, false),
+        "big" => (rest.clone(), format!("big:{rest}"), 1024, true, false),
         "path" => {
+            // this runs on the UI thread, so no icon for network files: the page draws a glyph
+            if crate::files::is_remote(&rest) {
+                reply(None);
+                return;
+            }
             let p = std::path::Path::new(&rest);
             let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
             let is_dir = p.is_dir();
@@ -169,13 +182,16 @@ pub fn clear_disk_cache() {
 fn shell_image(parsing: &str, size: i32, thumb: bool) -> Option<Vec<u8>> {
     let w = wide(parsing);
     let factory: IShellItemImageFactory = unsafe { SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None) }.ok()?;
-    let tries: &[SIIGBF] = if thumb {
-        &[SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK, SIIGBF_RESIZETOFIT]
+    // Quick Look's big size: a real thumbnail or nothing (Quick Look then shows the file's info card)
+    let tries: &[(SIIGBF, i32)] = if thumb && size > 320 {
+        &[(SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK, size)]
+    } else if thumb {
+        &[(SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK, size), (SIIGBF_RESIZETOFIT, size)]
     } else {
-        &[SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, SIIGBF_RESIZETOFIT]
+        &[(SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, size), (SIIGBF_RESIZETOFIT, size)]
     };
-    for flags in tries {
-        if let Ok(hbm) = unsafe { factory.GetImage(SIZE { cx: size, cy: size }, *flags) } {
+    for (flags, sz) in tries {
+        if let Ok(hbm) = unsafe { factory.GetImage(SIZE { cx: *sz, cy: *sz }, *flags) } {
             let png = bitmap_to_png(hbm);
             unsafe {
                 let _ = DeleteObject(HGDIOBJ(hbm.0));

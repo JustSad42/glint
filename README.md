@@ -74,7 +74,7 @@ pop-up or docked like the classic Start menu (pinned apps, All apps, folders, po
 - `rust/indexer`: `glint-indexer.exe`, a Windows service running as SYSTEM (reading a drive's file
   table needs admin rights). It answers searches over a local pipe that only the signed-in user,
   admins and SYSTEM may open.
-- `rust/app`: `Glint.exe`, the Tauri 2 launcher, running as you. Apps come from the shell's
+- `rust/app`: `Glint.exe`, the launcher (pure Rust, eframe/egui), running as you. Apps come from the shell's
   AppsFolder, icons and thumbnails from the shell image factory, content search from a tantivy
   index kept up to date by a file watcher at background priority. A low-level keyboard hook
   turns a lone Windows-key tap into "open Glint" without breaking Win+ shortcuts.

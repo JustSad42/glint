@@ -205,7 +205,8 @@ pub fn run(input: &str, filter: &str) -> Value {
                 let mut it = u.item;
                 // drop files that are gone
                 if let Some(p) = it["path"].as_str() {
-                    if matches!(it["kind"].as_str(), Some("file" | "folder" | "content")) && !Path::new(p).exists() {
+                    // network files are kept unchecked: asking the server would hold up the screen
+                    if matches!(it["kind"].as_str(), Some("file" | "folder" | "content")) && !files::is_remote(p) && !Path::new(p).exists() {
                         return None;
                     }
                 }
