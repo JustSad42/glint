@@ -75,6 +75,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "app-update"
+version = "1.0.0"
+source = "git+https://github.com/JustSad42/app-update?tag=v1.0.0#d8ee8bec6b06528490fc7aa3cf90865281c2b97d"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+ "ureq",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1712,8 +1722,9 @@ dependencies = [
 
 [[package]]
 name = "glint"
-version = "1.3.3"
+version = "1.3.4"
 dependencies = [
+ "app-update",
  "chrono",
  "clipboard-win",
  "crossbeam-channel",
@@ -1727,7 +1738,6 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "tantivy",
  "tauri",
  "tauri-build",
@@ -1746,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "glint-core"
-version = "1.3.3"
+version = "1.3.4"
 dependencies = [
  "chrono",
  "memchr",
@@ -1758,7 +1768,7 @@ dependencies = [
 
 [[package]]
 name = "glint-indexer"
-version = "1.3.3"
+version = "1.3.4"
 dependencies = [
  "glint-core",
  "parking_lot",
