@@ -19,6 +19,7 @@ mod files;
 mod fuzzy;
 mod history;
 mod hook;
+mod host;
 mod hotkeys;
 mod icons;
 mod media;
@@ -32,235 +33,25 @@ mod shellops;
 mod sysinfo;
 mod taskbar;
 mod timers;
+mod ui;
 mod updater;
 mod winmgmt;
-mod webview;
 mod wins;
 
-use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-use tauri::http::Response;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::window::{Effect, EffectsBuilder};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use std::time::Duration;
 
-static APP: OnceCell<AppHandle> = OnceCell::new();
-static SHOWN_AT: Mutex<Option<Instant>> = Mutex::new(None);
 static UPDATE: Mutex<Option<String>> = Mutex::new(None);
-static QUITTING: AtomicBool = AtomicBool::new(false);
-
-const W: f64 = 800.0;
-const H: f64 = 540.0;
-/// the docked "classic Start menu" layout
-const SW: f64 = 760.0;
-const SH: f64 = 640.0;
-/// Quick Look made the window big; `place` puts it back
-static QUICKLOOK: AtomicBool = AtomicBool::new(false);
 /// notices on screen (timers, reminders, script results)
-static NOTICES: Mutex<Vec<Value>> = Mutex::new(Vec::new());
+pub static NOTICES: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 
 fn arg_str<'a>(a: &'a Value, k: &str) -> &'a str {
     a[k].as_str().unwrap_or("")
 }
 
-fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
-    app.get_webview_window("main")
-}
-
-fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    let s = settings::load();
-    let mut b = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-        .title("Glint")
-        .inner_size(W, H)
-        .decorations(false)
-        .transparent(true)
-        .resizable(false)
-        .skip_taskbar(true)
-        .always_on_top(true)
-        .visible(false)
-        .focused(false)
-        .shadow(true);
-    if s.blur {
-        b = b.effects(EffectsBuilder::new().effect(Effect::Acrylic).build());
-    }
-    let w = b.build()?;
-    let app2 = app.clone();
-    w.on_window_event(move |e| match e {
-        WindowEvent::Focused(false) => {
-            let recent = SHOWN_AT.lock().map(|t| t.elapsed() < Duration::from_millis(350)).unwrap_or(false);
-            if !recent {
-                hide_launcher(&app2);
-            }
-        }
-        WindowEvent::CloseRequested { api, .. }
-            if !QUITTING.load(Ordering::SeqCst) => {
-                api.prevent_close();
-                hide_launcher(&app2);
-            }
-        _ => {}
-    });
-    Ok(w)
-}
-
-/// The monitor Glint opens on: under the mouse, or always the main one.
-fn target_monitor(app: &AppHandle, w: &WebviewWindow) -> Option<tauri::Monitor> {
-    if settings::load().monitor == "primary" {
-        if let Some(m) = app.primary_monitor().ok().flatten() {
-            return Some(m);
-        }
-    }
-    let pos = app.cursor_position().ok();
-    pos.and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten()).or_else(|| w.current_monitor().ok().flatten())
-}
-
-/// Pop-up: centered, in the upper part (or the middle). Start-menu layout: docked in the
-/// bottom-left corner, above the taskbar.
-fn place(app: &AppHandle, w: &WebviewWindow) {
-    QUICKLOOK.store(false, Ordering::SeqCst);
-    let Some(m) = target_monitor(app, w) else { return };
-    let s = settings::load();
-    let scale = m.scale_factor();
-    let mut wa = *m.work_area();
-    let start = s.layout == "start";
-    // an auto-hidden taskbar brought up with Glint covers the bottom: sit above it
-    if start {
-        let (mp, ms) = (m.position(), m.size());
-        let mon = windows::Win32::Foundation::RECT { left: mp.x, top: mp.y, right: mp.x + ms.width as i32, bottom: mp.y + ms.height as i32 };
-        let covered = taskbar::covered_bottom(mon);
-        let wa_bottom = wa.position.y + wa.size.height as i32;
-        let overlap = (wa_bottom - (mon.bottom - covered)).max(0);
-        wa.size.height = wa.size.height.saturating_sub(overlap as u32);
-    }
-    let (ww, wh) = if start { ((SW * scale) as i32, (SH * scale) as i32) } else { ((W * scale) as i32, (H * scale) as i32) };
-    let wh = wh.min(wa.size.height as i32 - (24.0 * scale) as i32);
-    let gap = (10.0 * scale) as i32;
-    // Start-menu layout: bottom-left corner, bottom center, or the middle of the screen
-    let corner = start && s.start_position != "center" && s.start_position != "bottom";
-    let x = if corner { wa.position.x + gap } else { wa.position.x + (wa.size.width as i32 - ww) / 2 };
-    let top = s.position != "center";
-    let y = if start && s.start_position == "center" {
-        wa.position.y + (wa.size.height as i32 - wh) / 2
-    } else if start {
-        wa.position.y + wa.size.height as i32 - wh - gap
-    } else if top {
-        wa.position.y + (wa.size.height as f64 * 0.16) as i32
-    } else {
-        wa.position.y + (wa.size.height as i32 - wh) / 2
-    };
-    // move first: resizing while still on a monitor with a different scale would be undone
-    // by Windows' DPI adjustment when the window crosses over
-    let _ = w.set_position(PhysicalPosition::new(x, y));
-    let _ = w.set_size(PhysicalSize::new(ww as u32, wh as u32));
-    let _ = w.set_position(PhysicalPosition::new(x, y));
-}
-
-pub fn show_launcher(app: &AppHandle) {
-    let w = match main_window(app) {
-        Some(w) => w,
-        None => match create_main(app) {
-            Ok(w) => w,
-            Err(_) => return,
-        },
-    };
-    if w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false) {
-        hide_launcher(app);
-        return;
-    }
-    // remember the window you came from: layouts move it and clips paste into it
-    unsafe {
-        let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
-        let ours = w.hwnd().map(|h| h.0 as isize == fg.0 as isize).unwrap_or(false);
-        if !fg.is_invalid() && !ours {
-            winmgmt::PREV.store(fg.0 as isize, Ordering::SeqCst);
-        }
-    }
-    // the taskbar is activated for an instant: don't treat that as Glint losing focus
-    *SHOWN_AT.lock() = Some(Instant::now());
-    if let Ok(h) = w.hwnd() {
-        taskbar::prepare(windows::Win32::Foundation::HWND(h.0 as _));
-    }
-    place(app, &w);
-    webview::resume(&w);
-    let _ = w.emit("launcher-shown", json!({}));
-    let _ = w.show();
-    let _ = w.set_focus();
-    if let Ok(h) = w.hwnd() {
-        let h = windows::Win32::Foundation::HWND(h.0 as _);
-        wins::force_foreground(h);
-        taskbar::kick(h);
-    }
-    apps::refresh(false);
-}
-
-/// Drop the taskbar's hold on the Glint window (see taskbar.rs).
-fn lower_taskbar(app: &AppHandle) -> bool {
-    main_window(app).and_then(|w| w.hwnd().ok()).map(|h| taskbar::lower(windows::Win32::Foundation::HWND(h.0 as _))).unwrap_or(false)
-}
-
-pub fn hide_launcher(app: &AppHandle) {
-    let lifted = lower_taskbar(app);
-    if let Some(w) = main_window(app) {
-        if w.is_visible().unwrap_or(false) {
-            let _ = w.emit("launcher-hidden", json!({}));
-            let _ = w.hide();
-            webview::schedule_suspend(app);
-        }
-    }
-    if lifted {
-        taskbar::hand_back(winmgmt::PREV.load(Ordering::SeqCst));
-    }
-}
-
-fn open_settings(app: &AppHandle, section: &str) {
-    hide_launcher(app);
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_focus();
-        if !section.is_empty() {
-            let _ = w.emit("goto", section);
-        }
-        return;
-    }
-    let url = if section.is_empty() { "settings.html".to_string() } else { format!("settings.html#{section}") };
-    let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(url.into()))
-        .title("Glint Settings")
-        .inner_size(960.0, 680.0)
-        .min_inner_size(760.0, 520.0)
-        .decorations(false)
-        .center()
-        .shadow(true)
-        .build();
-}
-
-/// Make the launcher big for Quick Look, or put it back.
-fn quicklook(app: &AppHandle, on: bool) {
-    let Some(w) = main_window(app) else { return };
-    if !on {
-        place(app, &w);
-        return;
-    }
-    let Some(m) = w.current_monitor().ok().flatten() else { return };
-    let wa = m.work_area();
-    let ww = (wa.size.width as f64 * 0.78) as i32;
-    // on a portrait screen don't go taller than a landscape-ish box
-    let wh = ((wa.size.height as f64 * 0.86) as i32).min((ww as f64 * 0.9) as i32);
-    let x = wa.position.x + (wa.size.width as i32 - ww) / 2;
-    let y = wa.position.y + (wa.size.height as i32 - wh) / 2;
-    QUICKLOOK.store(true, Ordering::SeqCst);
-    let _ = w.set_position(PhysicalPosition::new(x, y));
-    let _ = w.set_size(PhysicalSize::new(ww as u32, wh as u32));
-    let _ = w.set_position(PhysicalPosition::new(x, y));
-}
-
-const NOTICE_W: f64 = 380.0;
-
 /// Show a notice in the bottom-right corner (timer done, reminder, script result).
-fn notice(app: &AppHandle, mut n: Value) {
+pub fn notice(mut n: Value) {
     {
         let mut l = NOTICES.lock();
         let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) + l.len() as u64;
@@ -270,77 +61,17 @@ fn notice(app: &AppHandle, mut n: Value) {
             l.remove(0);
         }
     }
-    let a = app.clone();
-    let _ = app.run_on_main_thread(move || layout_notices(&a));
+    host::notices_changed();
 }
 
-fn layout_notices(app: &AppHandle) {
-    let n = NOTICES.lock().len();
-    let existing = app.get_webview_window("notice");
-    if n == 0 {
-        if let Some(w) = existing {
-            let _ = w.hide();
-        }
-        return;
-    }
-    let w = match existing {
-        Some(w) => w,
-        None => match WebviewWindowBuilder::new(app, "notice", WebviewUrl::App("notice.html".into()))
-            .title("Glint")
-            .inner_size(NOTICE_W, 140.0)
-            .decorations(false)
-            .transparent(true)
-            .resizable(false)
-            .skip_taskbar(true)
-            .always_on_top(true)
-            .visible(false)
-            .focused(false)
-            .shadow(false)
-            .build()
-        {
-            Ok(w) => w,
-            Err(_) => return,
-        },
-    };
-    let Some(m) = app.primary_monitor().ok().flatten() else { return };
-    let scale = m.scale_factor();
-    let wa = m.work_area();
-    let (ww, wh) = ((NOTICE_W * scale) as i32, ((16.0 + n as f64 * 112.0) * scale) as i32);
-    let gap = (8.0 * scale) as i32;
-    let x = wa.position.x + wa.size.width as i32 - ww - gap;
-    let y = wa.position.y + wa.size.height as i32 - wh - gap;
-    let _ = w.set_position(PhysicalPosition::new(x, y));
-    let _ = w.set_size(PhysicalSize::new(ww as u32, wh as u32));
-    let _ = w.set_position(PhysicalPosition::new(x, y));
-    let _ = w.emit("notices", json!(*NOTICES.lock()));
-    // show without taking focus from what you're doing
-    if let Ok(h) = w.hwnd() {
-        unsafe {
-            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE};
-            let hw = windows::Win32::Foundation::HWND(h.0 as _);
-            let _ = ShowWindow(hw, SW_SHOWNOACTIVATE);
-            let _ = SetWindowPos(hw, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-    }
-}
-
-fn dismiss_notice(app: &AppHandle, id: u64) -> Option<Value> {
+pub fn dismiss_notice(id: u64) -> Option<Value> {
     let gone = {
         let mut l = NOTICES.lock();
         let i = l.iter().position(|n| n["id"].as_u64() == Some(id));
         i.map(|i| l.remove(i))
     };
-    let a = app.clone();
-    let _ = app.run_on_main_thread(move || layout_notices(&a));
+    host::notices_changed();
     gone
-}
-
-fn quit(app: &AppHandle) {
-    QUITTING.store(true, Ordering::SeqCst);
-    let _ = std::fs::write(settings::quit_marker(), b"quit by user");
-    let _ = lower_taskbar(app);
-    hook::stop();
-    app.exit(0);
 }
 
 /// Strip what shouldn't be remembered in history.
@@ -354,14 +85,14 @@ fn clean_item(item: &Value) -> Value {
     it
 }
 
-fn glint_command(app: &AppHandle, cmd: &str) -> Value {
+fn glint_command(cmd: &str) -> Value {
     match cmd {
         "settings" => {
-            open_settings(app, "");
+            host::open_settings("");
             json!({"hide": true})
         }
         "updates" => {
-            open_settings(app, "about");
+            host::open_settings("about");
             json!({"hide": true})
         }
         "rebuild" => {
@@ -382,7 +113,7 @@ fn glint_command(app: &AppHandle, cmd: &str) -> Value {
             json!({"hide": true})
         }
         "start" => {
-            hide_launcher(app);
+            host::hide_launcher();
             std::thread::spawn(|| {
                 std::thread::sleep(Duration::from_millis(120));
                 hook::open_start_menu();
@@ -390,7 +121,7 @@ fn glint_command(app: &AppHandle, cmd: &str) -> Value {
             json!({"hide": true})
         }
         "quit" => {
-            quit(app);
+            host::quit();
             json!({"hide": true})
         }
         "scripts" => {
@@ -403,7 +134,7 @@ fn glint_command(app: &AppHandle, cmd: &str) -> Value {
 }
 
 /// Do what the user picked. `mode` is the chosen action (default, reveal, admin, copy-path...).
-fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Value, String> {
+pub fn activate(item: &Value, mode: &str, query: &str) -> Result<Value, String> {
     let kind = arg_str(item, "kind");
     let key = arg_str(item, "key");
     let path = arg_str(item, "path");
@@ -444,13 +175,13 @@ fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Va
         (_, m) if m.starts_with("hotkey:") => {
             let combo = hotkeys::normalize(&m[7..])?;
             pins::set_hotkey(&combo, &clean_item(item));
-            hotkeys::apply(app)?;
+            hotkeys::apply()?;
             Ok(json!({"hide": false, "toast": format!("{combo} now opens it, from anywhere"), "refresh": true}))
         }
         (_, "unhotkey") => {
             if let Some(c) = pins::hotkey_for(key) {
                 pins::remove_hotkey(&c);
-                let _ = hotkeys::apply(app);
+                let _ = hotkeys::apply();
             }
             Ok(json!({"hide": false, "toast": "Shortcut removed", "refresh": true}))
         }
@@ -521,7 +252,7 @@ fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Va
             done(None, true)
         }
         ("window", _) => {
-            hide_launcher(app);
+            host::hide_launcher();
             wins::activate(item["hwnd"].as_i64().unwrap_or(0) as isize);
             done(None, true)
         }
@@ -540,7 +271,7 @@ fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Va
             Ok(json!({"hide": false, "toast": msg, "refresh": true}))
         }
         ("tab", _) => {
-            hide_launcher(app);
+            host::hide_launcher();
             browser::activate_tab(item["hwnd"].as_i64().unwrap_or(0) as isize, arg_str(item, "title"), item["pos"].as_u64().unwrap_or(0) as usize)?;
             done(None, true)
         }
@@ -551,14 +282,13 @@ fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Va
                 scripts::run_in_terminal(path, args)?;
                 return done(None, true);
             }
-            let h = app.clone();
             let name = arg_str(item, "title").to_string();
             scripts::run_hidden(path, args, move |r| {
                 let (body, ok) = match r {
                     Ok(t) => (t, true),
                     Err(e) => (e, false),
                 };
-                notice(&h, json!({"title": name, "body": body, "kind": if ok { "ok" } else { "err" }}));
+                notice(json!({"title": name, "body": body, "kind": if ok { "ok" } else { "err" }}));
             });
             done(Some(&format!("Running {}…", arg_str(item, "title"))), true)
         }
@@ -580,7 +310,7 @@ fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Va
             done(Some(&format!("Copied {text}")), false)
         }
         ("layout", _) => {
-            hide_launcher(app);
+            host::hide_launcher();
             let op = arg_str(item, "op").to_string();
             std::thread::sleep(Duration::from_millis(60));
             winmgmt::apply(&op)?;
@@ -596,7 +326,7 @@ fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Va
                 let msg = clipvault::restore(id, false)?;
                 return done(Some(&msg), false);
             }
-            hide_launcher(app);
+            host::hide_launcher();
             clipvault::restore(id, true)?;
             done(None, true)
         }
@@ -613,7 +343,7 @@ fn activate(app: &AppHandle, item: &Value, mode: &str, query: &str) -> Result<Va
             remember();
             match actions::run(arg_str(item, "id"))? {
                 actions::Outcome::Done(msg) => Ok(json!({"hide": msg.is_none(), "toast": msg})),
-                actions::Outcome::Glint(cmd) => Ok(glint_command(app, cmd)),
+                actions::Outcome::Glint(cmd) => Ok(glint_command(cmd)),
             }
         }
         _ => Err("Nothing to do".into()),
@@ -639,26 +369,24 @@ fn status() -> Value {
     })
 }
 
-fn handle(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
+pub fn handle(cmd: &str, a: Value) -> Result<Value, String> {
     Ok(match cmd {
         "search" => search::run(arg_str(&a, "q"), if arg_str(&a, "filter").is_empty() { "all" } else { arg_str(&a, "filter") }),
         "details" => search::details(&a["item"]),
-        "activate" => activate(app, &a["item"], if arg_str(&a, "mode").is_empty() { "default" } else { arg_str(&a, "mode") }, arg_str(&a, "q"))?,
+        "activate" => activate(&a["item"], if arg_str(&a, "mode").is_empty() { "default" } else { arg_str(&a, "mode") }, arg_str(&a, "q"))?,
         "hide" => {
-            hide_launcher(app);
+            host::hide_launcher();
             json!(true)
         }
         "queries" => json!(history::queries()),
         "pins_list" => pins::list(),
         "hotkey_remove" => {
             pins::remove_hotkey(arg_str(&a, "combo"));
-            let _ = hotkeys::apply(app);
+            let _ = hotkeys::apply();
             json!(true)
         }
         "quicklook" => {
-            let on = a["on"].as_bool().unwrap_or(false);
-            let h = app.clone();
-            let _ = app.run_on_main_thread(move || quicklook(&h, on));
+            host::quicklook(a["on"].as_bool().unwrap_or(false));
             json!(true)
         }
         "all_apps" => json!(apps::all()),
@@ -677,11 +405,11 @@ fn handle(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
         }
         "notices" => json!(*NOTICES.lock()),
         "notice_dismiss" => {
-            dismiss_notice(app, a["id"].as_u64().unwrap_or(0));
+            dismiss_notice(a["id"].as_u64().unwrap_or(0));
             json!(true)
         }
         "notice_snooze" => {
-            if let Some(n) = dismiss_notice(app, a["id"].as_u64().unwrap_or(0)) {
+            if let Some(n) = dismiss_notice(a["id"].as_u64().unwrap_or(0)) {
                 let mins = a["mins"].as_i64().unwrap_or(5).max(1);
                 let label = n["timer"]["label"].as_str().or(n["title"].as_str()).unwrap_or("").to_string();
                 let due = chrono::Local::now().timestamp() + mins * 60;
@@ -724,25 +452,12 @@ fn handle(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
             if s.content_roots != old.content_roots || s.content_excludes != old.content_excludes || s.content_max_mb != old.content_max_mb {
                 content::restart();
             }
-            if s.show_tray != old.show_tray {
-                if s.show_tray {
-                    let _ = setup_tray(app);
-                } else {
-                    let _ = app.remove_tray_by_id("glint");
-                }
-            }
-            if s.blur != old.blur {
-                // the window effect is set when the window is made
-                if let Some(w) = main_window(app) {
-                    let _ = w.destroy();
-                }
-                let _ = create_main(app);
-            }
-            let _ = app.emit("settings-changed", serde_json::to_value(&s).unwrap());
+            // the tray icon, the window backdrop and the theme follow in the UI's next pass
+            host::settings_changed();
             json!({"ok": true})
         }
         "open_settings" => {
-            open_settings(app, arg_str(&a, "section"));
+            host::open_settings(arg_str(&a, "section"));
             json!(true)
         }
         "pick_folder" => json!(rfd::FileDialog::new().pick_folder().map(|p| p.to_string_lossy().into_owned())),
@@ -777,64 +492,20 @@ fn handle(app: &AppHandle, cmd: &str, a: Value) -> Result<Value, String> {
             json!(true)
         }
         "show" => {
-            if let Some(w) = app.get_webview_window("settings") {
-                let _ = w.close();
-            }
-            let h = app.clone();
-            let _ = app.run_on_main_thread(move || show_launcher(&h));
+            host::close_settings();
+            host::show_launcher();
             json!(true)
         }
         "close_settings" => {
-            if let Some(w) = app.get_webview_window("settings") {
-                let _ = w.close();
-            }
+            host::close_settings();
             json!(true)
         }
         "quit" => {
-            quit(app);
+            host::quit();
             json!(true)
         }
         _ => return Err(format!("unknown command {cmd}")),
     })
-}
-
-#[tauri::command]
-async fn call(app: AppHandle, cmd: String, args: Value) -> Result<Value, String> {
-    // file work and COM calls stay off the UI thread
-    tauri::async_runtime::spawn_blocking(move || handle(&app, &cmd, args)).await.map_err(|e| e.to_string())?
-}
-
-fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    if app.tray_by_id("glint").is_some() {
-        return Ok(());
-    }
-    let open = MenuItem::with_id(app, "open", "Open Glint", true, None::<&str>)?;
-    let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
-    let rebuild = MenuItem::with_id(app, "rebuild", "Rebuild content index", true, None::<&str>)?;
-    let sep = PredefinedMenuItem::separator(app)?;
-    let quit_i = MenuItem::with_id(app, "quit", "Quit Glint", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &settings_i, &rebuild, &sep, &quit_i])?;
-    let mut b = TrayIconBuilder::with_id("glint")
-        .tooltip("Glint: press the Windows key to search")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, e| match e.id().as_ref() {
-            "open" => show_launcher(app),
-            "settings" => open_settings(app, ""),
-            "rebuild" => content::rebuild(),
-            "quit" => quit(app),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, e| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
-                show_launcher(tray.app_handle());
-            }
-        });
-    if let Some(icon) = app.default_window_icon() {
-        b = b.icon(icon.clone());
-    }
-    b.build(app)?;
-    Ok(())
 }
 
 fn main() {
@@ -851,6 +522,29 @@ fn main() {
         settings::set_autostart(false);
         return;
     }
+    // test hook: run one call and print its JSON (used to compare the old and new UI)
+    if let Some(i) = args.iter().position(|a| a == "--call") {
+        let cmd = args.get(i + 1).cloned().unwrap_or_default();
+        let a: Value = args.get(i + 2).and_then(|s| serde_json::from_str(s).ok()).unwrap_or(json!({}));
+        if cmd == "icon" {
+            // write one icon/thumbnail (by its gicon path) to a PNG file
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            icons::request(arg_str(&a, "path"), move |png| {
+                let _ = tx.send(png);
+            });
+            if let Ok(Some(png)) = rx.recv_timeout(Duration::from_secs(10)) {
+                let _ = std::fs::write(arg_str(&a, "out"), png.as_slice());
+            }
+            return;
+        }
+        apps::refresh(true);
+        std::thread::sleep(Duration::from_millis(1500));
+        match handle(&cmd, a) {
+            Ok(v) => println!("{v}"),
+            Err(e) => println!("{}", json!({ "error": e })),
+        }
+        return;
+    }
     // the watchdog task starts us every few minutes; stay quit if you quit on purpose
     if has("--watchdog") && settings::quit_marker().exists() {
         return;
@@ -858,136 +552,89 @@ fn main() {
     if !has("--watchdog") && !has("--quit") {
         let _ = std::fs::remove_file(settings::quit_marker());
     }
+    // with another copy running, hand it our arguments ("--quit", "--settings", or show) and end
+    let forward: Vec<String> = args.iter().skip(1).cloned().collect();
+    if host::forward_to_running(&forward) {
+        return;
+    }
+    if has("--quit") {
+        return; // nothing to quit
+    }
     taskbar::restore_after_crash();
     let tray_start = has("--tray");
-    // with another copy running, the single-instance plugin hands it "--quit" and this process
-    // ends; otherwise there is nothing to quit
-    let quit_only = has("--quit");
     let want_settings = has("--settings");
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
-            if argv.iter().any(|a| a == "--quit") {
-                quit(app);
-            } else if argv.iter().any(|a| a == "--settings") {
-                open_settings(app, "");
-            } else if !argv.iter().any(|a| a == "--tray") {
-                show_launcher(app);
-            }
-        }))
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, sc, ev| {
-                    if ev.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        if let Some(item) = hotkeys::find(sc) {
-                            let a = app.clone();
-                            std::thread::spawn(move || {
-                                let _ = activate(&a, &item, "default", "");
-                            });
-                        }
-                    }
-                })
-                .build(),
-        )
-        .register_asynchronous_uri_scheme_protocol("gicon", |_ctx, req, responder| {
-            let path = req.uri().path().to_string();
-            icons::request(&path, move |png| {
-                let resp = match png {
-                    Some(p) => Response::builder()
-                        .header("Content-Type", "image/png")
-                        .header("Cache-Control", "max-age=3600")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(p.as_ref().clone()),
-                    None => Response::builder().status(404).header("Access-Control-Allow-Origin", "*").body(Vec::new()),
-                };
-                responder.respond(resp.unwrap());
-            });
-        })
-        .invoke_handler(tauri::generate_handler![call])
-        .setup(move |app| {
-            let handle = app.handle().clone();
-            if quit_only {
-                handle.exit(0);
-                return Ok(());
-            }
-            let _ = APP.set(handle.clone());
-            let s = settings::load();
-            hook::apply(&s);
-            if s.start_with_windows {
-                // put start-with-Windows back if something removed it (or after an update)
-                std::thread::spawn(|| {
-                    if !settings::autostart_ok() {
-                        settings::set_autostart(true);
-                    }
-                });
-            }
-
-            // keyboard hook -> show / Win+E
-            let (tx, rx) = crossbeam_channel::unbounded();
-            hook::start(tx);
-            let h2 = handle.clone();
-            std::thread::spawn(move || {
-                for ev in rx.iter() {
-                    match ev {
-                        hook::Event::Show => {
-                            let h3 = h2.clone();
-                            let _ = h2.run_on_main_thread(move || show_launcher(&h3));
-                        }
-                        hook::Event::WinE => {
-                            if !shellops::launch_filepilot(None) {
-                                let _ = std::process::Command::new("explorer.exe").spawn();
-                            }
-                        }
-                    }
-                }
-            });
-
-            create_main(&handle)?;
-            if s.show_tray {
-                setup_tray(&handle)?;
-            }
-            apps::refresh(true);
-            content::start();
-            let _ = hotkeys::apply(&handle);
-            scripts::ensure_dir();
-            let h4 = handle.clone();
-            timers::start(move |t| {
-                let title = if t.label.is_empty() { if t.kind == "timer" { "Time's up".to_string() } else { "Reminder".to_string() } } else { t.label.clone() };
-                notice(&h4, json!({"title": title, "body": timers::describe(&t), "kind": "timer", "timer": t}));
-            });
-            if s.browser_search {
-                browser::refresh(s.browser_history);
-            }
-
-            // daily update check
-            std::thread::spawn(|| loop {
-                std::thread::sleep(Duration::from_secs(90));
-                updater::daily_check(&|_, _| {});
-                let v = updater::check(false);
-                if v["available"].as_bool() == Some(true) {
-                    *UPDATE.lock() = v["latest"].as_str().map(String::from);
-                }
-                std::thread::sleep(Duration::from_secs(6 * 3600));
-            });
-
-            if want_settings || !s.first_run_done {
-                let mut s2 = s.clone();
-                s2.first_run_done = true;
-                let _ = settings::save(&s2);
-                open_settings(&handle, if s.first_run_done { "" } else { "welcome" });
-            } else if !tray_start {
-                show_launcher(&handle);
-            }
-            Ok(())
-        })
-        .build(tauri::generate_context!())
-        .expect("error while building Glint")
-        .run(|_app, e| {
-            if let tauri::RunEvent::ExitRequested { api, code, .. } = e {
-                // closing the settings window must not end the app
-                if code.is_none() && !QUITTING.load(Ordering::SeqCst) {
-                    api.prevent_exit();
-                }
+    let s = settings::load();
+    hook::apply(&s);
+    if s.start_with_windows {
+        // put start-with-Windows back if something removed it (or after an update)
+        std::thread::spawn(|| {
+            if !settings::autostart_ok() {
+                settings::set_autostart(true);
             }
         });
+    }
+    // keyboard hook -> show / Win+E
+    let (tx, rx) = crossbeam_channel::unbounded();
+    hook::start(tx);
+    std::thread::spawn(move || {
+        for ev in rx.iter() {
+            match ev {
+                hook::Event::Show => host::show_launcher(),
+                hook::Event::WinE => {
+                    if !shellops::launch_filepilot(None) {
+                        let _ = std::process::Command::new("explorer.exe").spawn();
+                    }
+                }
+            }
+        }
+    });
+    apps::refresh(true);
+    content::start();
+    scripts::ensure_dir();
+    timers::start(move |t| {
+        let title = if t.label.is_empty() { if t.kind == "timer" { "Time's up".to_string() } else { "Reminder".to_string() } } else { t.label.clone() };
+        notice(json!({"title": title, "body": timers::describe(&t), "kind": "timer", "timer": t}));
+    });
+    if s.browser_search {
+        browser::refresh(s.browser_history);
+    }
+    // daily update check
+    std::thread::spawn(|| loop {
+        std::thread::sleep(Duration::from_secs(90));
+        updater::daily_check(&|_, _| {});
+        let v = updater::check(false);
+        if v["available"].as_bool() == Some(true) {
+            *UPDATE.lock() = v["latest"].as_str().map(String::from);
+        }
+        std::thread::sleep(Duration::from_secs(6 * 3600));
+    });
+
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("Glint")
+            .with_app_id("com.glint.launcher")
+            .with_inner_size([host::W as f32, host::H as f32])
+            .with_decorations(false)
+            // no caption buttons: with the acrylic backdrop DWM would draw them on the extended frame
+            .with_close_button(false)
+            .with_minimize_button(false)
+            .with_maximize_button(false)
+            .with_transparent(true)
+            .with_resizable(false)
+            .with_taskbar(false)
+            .with_window_level(egui::WindowLevel::AlwaysOnTop)
+            .with_icon(ui::app::app_icon())
+            .with_visible(false),
+        persist_window: false,
+        // no waiting for vsync in SwapBuffers: every pass of the opening would wait a frame
+        // (DWM composes the window, so nothing tears); App::ui caps animations instead
+        glow_options: eframe::egui_glow::GlowConfiguration { vsync: false, ..Default::default() },
+        ..Default::default()
+    };
+    let _ = eframe::run_native(
+        "Glint",
+        options,
+        Box::new(move |cc| Ok(Box::new(ui::app::App::new(cc, ui::app::Startup { tray_start, want_settings })))),
+    );
 }

@@ -1,14 +1,12 @@
 # Builds Glint and its installer, and optionally publishes them as a GitHub release.
 #   .\release.ps1                          build + installer only (dist\)
 #   .\release.ps1 -Publish -Notes "..."    also tag v<version> and create the GitHub release
-# The version lives in rust\Cargo.toml ([workspace.package]) and rust\app\tauri.conf.json: bump both.
+# The version lives in rust\Cargo.toml ([workspace.package]).
 param([switch]$Publish, [string]$Notes = "")
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 
 $version = (Select-String -Path "$root\rust\Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
-$confVersion = (Get-Content "$root\rust\app\tauri.conf.json" -Raw | ConvertFrom-Json).version
-if ($confVersion -ne $version) { throw "Version mismatch: Cargo.toml $version, tauri.conf.json $confVersion" }
 Write-Host "Glint $version"
 
 Push-Location "$root\rust"

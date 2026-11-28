@@ -1,24 +1,41 @@
 //! Global shortcuts for pinned/any items ("Ctrl+Alt+T" opens Terminal without opening Glint).
 use crate::pins;
+use global_hotkey::hotkey::HotKey;
+use global_hotkey::GlobalHotKeyManager;
+use parking_lot::Mutex;
 use serde_json::Value;
-use tauri::AppHandle;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+use std::collections::HashMap;
 
-/// Register every saved shortcut again. Returns the ones Windows refused (taken by another app).
-pub fn apply(app: &AppHandle) -> Result<(), String> {
-    let gs = app.global_shortcut();
-    let _ = gs.unregister_all();
+/// What's registered now: hotkey id -> (hotkey, item it opens)
+static REGISTERED: Mutex<Option<HashMap<u32, (HotKey, Value)>>> = Mutex::new(None);
+
+/// Register every saved shortcut again (from any thread; the UI thread does the work).
+pub fn apply() -> Result<(), String> {
+    crate::host::apply_hotkeys()
+}
+
+/// Register every saved shortcut again. Errors name the ones Windows refused (taken by another app).
+pub fn apply_with(m: &GlobalHotKeyManager) -> Result<(), String> {
+    let mut reg = REGISTERED.lock();
+    if let Some(old) = reg.take() {
+        let keys: Vec<HotKey> = old.values().map(|(h, _)| *h).collect();
+        let _ = m.unregister_all(&keys);
+    }
+    let mut now = HashMap::new();
     let mut bad = Vec::new();
-    for (combo, _) in pins::hotkeys() {
-        match combo.parse::<Shortcut>() {
-            Ok(sc) => {
-                if gs.register(sc).is_err() {
+    for (combo, item) in pins::hotkeys() {
+        match combo.parse::<HotKey>() {
+            Ok(hk) => {
+                if m.register(hk).is_ok() {
+                    now.insert(hk.id(), (hk, item));
+                } else {
                     bad.push(combo);
                 }
             }
             Err(_) => bad.push(combo),
         }
     }
+    *reg = Some(now);
     if bad.is_empty() {
         Ok(())
     } else {
@@ -26,8 +43,8 @@ pub fn apply(app: &AppHandle) -> Result<(), String> {
     }
 }
 
-pub fn find(sc: &Shortcut) -> Option<Value> {
-    pins::hotkeys().into_iter().find(|(c, _)| c.parse::<Shortcut>().ok().as_ref() == Some(sc)).map(|(_, v)| v)
+pub fn find(id: u32) -> Option<Value> {
+    REGISTERED.lock().as_ref().and_then(|m| m.get(&id).map(|(_, v)| v.clone()))
 }
 
 /// "ctrl+alt+t" -> "Ctrl+Alt+T", rejecting combos without a modifier.
@@ -51,6 +68,19 @@ pub fn normalize(combo: &str) -> Result<String, String> {
     let mut order = ["Ctrl", "Alt", "Shift", "Super"].iter().filter(|m| mods.contains(m)).cloned().collect::<Vec<_>>().join("+");
     order.push('+');
     order.push_str(&key);
-    order.parse::<Shortcut>().map_err(|_| format!("{order} can't be used as a shortcut"))?;
+    order.parse::<HotKey>().map_err(|_| format!("{order} can't be used as a shortcut"))?;
     Ok(order)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize;
+    #[test]
+    fn combos() {
+        assert_eq!(normalize("ctrl+alt+t").unwrap(), "Ctrl+Alt+T");
+        assert_eq!(normalize("Alt+Shift+F5").unwrap(), "Alt+Shift+F5");
+        assert_eq!(normalize("Ctrl+Space").unwrap(), "Ctrl+SPACE");
+        assert!(normalize("Shift+A").is_err());
+        assert!(normalize("A").is_err());
+    }
 }
