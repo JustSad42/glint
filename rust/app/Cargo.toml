@@ -33,7 +33,7 @@ walkdir = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 pdf-extract = "0.7"
 ureq = { version = "3", features = ["json"] }
-sha2 = "0.10"
+app-update = { git = "https://github.com/JustSad42/app-update", tag = "v1.0.0" }
 winreg = "0.55"
 clipboard-win = "5"
 urlencoding = "2"

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use windows::core::PCWSTR;
 use windows::Win32::UI::Shell::{
-    ShellExecuteExW, SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE, SEE_MASK_INVOKEIDLIST, SEE_MASK_NOASYNC,
+    ShellExecuteExW, SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_WANTNUKEWARNING, FOF_SILENT, FO_DELETE, SEE_MASK_INVOKEIDLIST, SEE_MASK_NOASYNC,
     SHELLEXECUTEINFOW, SHFILEOPSTRUCTW,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -121,7 +121,8 @@ pub fn recycle(path: &str) -> Result<(), String> {
     let mut op = SHFILEOPSTRUCTW {
         wFunc: FO_DELETE,
         pFrom: PCWSTR(from.as_ptr()),
-        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI).0 as u16,
+        // NUKEWARNING: ask before a delete that can't be recycled (network or removable drive)
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_WANTNUKEWARNING).0 as u16,
         ..Default::default()
     };
     let r = unsafe { SHFileOperationW(&mut op) };

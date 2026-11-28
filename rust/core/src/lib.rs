@@ -4,6 +4,7 @@
 //! - `proto`: the JSON-lines messages sent over the named pipe
 //! - `ntfs`: reading a volume's file table and change journal (Windows only)
 //! - `pipe`: the named-pipe server and client (Windows only)
+pub mod access;
 pub mod index;
 pub mod proto;
 pub mod query;

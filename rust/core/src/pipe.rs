@@ -1,19 +1,22 @@
 //! The local named pipe between the launcher and the indexer: one JSON request per line,
 //! one JSON reply per line. Remote clients are rejected; only SYSTEM, admins and the
-//! signed-in (interactive) user may connect.
+//! signed-in (interactive) user may connect. Each request carries who is asking.
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::windows::io::FromRawHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{LocalFree, HLOCAL};
+use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
 use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
-use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+use windows::Win32::Security::{RevertToSelf, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY};
+use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+use windows::Win32::UI::Shell::GetUserProfileDirectoryW;
+use windows::core::PWSTR;
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, ImpersonateNamedPipeClient, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 
 const PIPE_ACCESS_DUPLEX: u32 = 3;
@@ -21,12 +24,51 @@ const ERROR_PIPE_CONNECTED: u32 = 535;
 /// SYSTEM and admins: full access. Interactive users: read + write.
 const SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)";
 
+/// The longest request line accepted.
+const MAX_LINE: u64 = 64 * 1024;
+
+/// Who is on the other end of the pipe.
+#[derive(Clone, Debug, Default)]
+pub struct Caller {
+    /// Their profile folder (`None` if it couldn't be found out).
+    pub profile: Option<String>,
+}
+
+/// Borrows the client's identity just long enough to ask for its profile folder. Windows allows
+/// this only after something has been read from the pipe.
+fn caller(pipe: HANDLE) -> Caller {
+    unsafe {
+        if ImpersonateNamedPipeClient(pipe).is_err() {
+            return Caller::default();
+        }
+        let mut token = HANDLE::default();
+        let opened = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut token).is_ok();
+        // Never carry on as the client: if this fails the process must not continue.
+        if RevertToSelf().is_err() {
+            std::process::abort();
+        }
+        if !opened {
+            return Caller::default();
+        }
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let profile = GetUserProfileDirectoryW(token, Some(PWSTR(buf.as_mut_ptr())), &mut len)
+            .is_ok()
+            .then(|| String::from_utf16_lossy(&buf[..buf.iter().position(|c| *c == 0).unwrap_or(0)]))
+            .filter(|p| !p.is_empty());
+        let _ = CloseHandle(token);
+        Caller { profile }
+    }
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// Serve requests until `stop` is set. `handle` turns one request line into one reply line.
-pub fn serve(name: &str, handle: Arc<dyn Fn(&str) -> String + Send + Sync>, stop: Arc<AtomicBool>) -> Result<(), String> {
+pub type Handler = Arc<dyn Fn(&str, &Caller) -> String + Send + Sync>;
+
+pub fn serve(name: &str, handle: Handler, stop: Arc<AtomicBool>) -> Result<(), String> {
     let wname = wide(name);
     let sddl = wide(SDDL);
     let mut sd = PSECURITY_DESCRIPTOR::default();
@@ -71,15 +113,19 @@ pub fn serve(name: &str, handle: Arc<dyn Fn(&str) -> String + Send + Sync>, stop
                     Ok(w) => w,
                     Err(_) => return,
                 };
+                let raw = HANDLE(std::os::windows::io::AsRawHandle::as_raw_handle(&file));
                 let mut reader = BufReader::new(file);
                 let mut line = String::new();
+                let mut who: Option<Caller> = None;
                 loop {
                     line.clear();
-                    match reader.read_line(&mut line) {
+                    match reader.by_ref().take(MAX_LINE).read_line(&mut line) {
                         Ok(0) | Err(_) => break,
+                        Ok(n) if n as u64 == MAX_LINE && !line.ends_with('\n') => break,
                         Ok(_) => {}
                     }
-                    let mut reply = handle(line.trim_end());
+                    let who = who.get_or_insert_with(|| caller(raw));
+                    let mut reply = handle(line.trim_end(), who);
                     reply.push('\n');
                     if writer.write_all(reply.as_bytes()).and_then(|_| writer.flush()).is_err() {
                         break;
@@ -139,5 +185,38 @@ impl Client {
             }
         }
         unreachable!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real pipe: the server learns the connecting user's profile, answers as itself, and drops
+    /// a client that sends an endless line.
+    #[test]
+    fn the_server_knows_who_is_asking() {
+        let name = format!(r"\\.\pipe\glint-test-{}", std::process::id());
+        let stop = Arc::new(AtomicBool::new(false));
+        let server = {
+            let (name, stop) = (name.clone(), stop.clone());
+            std::thread::spawn(move || serve(&name, Arc::new(|line, who| format!("{line}|{}", who.profile.as_deref().unwrap_or("?"))), stop))
+        };
+        let mut client = Client::new(&name);
+        let reply = (0..100)
+            .find_map(|_| {
+                client.call("hi").ok().or_else(|| {
+                    std::thread::sleep(Duration::from_millis(20));
+                    None
+                })
+            })
+            .expect("no reply");
+        let mine = std::env::var("USERPROFILE").unwrap();
+        assert_eq!(reply.trim_end().to_lowercase(), format!("hi|{}", mine.to_lowercase()));
+        assert!(client.call(&"x".repeat(MAX_LINE as usize + 10)).is_err(), "an endless line is refused");
+        stop.store(true, Ordering::SeqCst);
+        drop(client);
+        poke(&name);
+        server.join().unwrap().unwrap();
     }
 }

@@ -10,6 +10,7 @@
 
 use glint_core::index::{Builder, VolumeIndex};
 use glint_core::ntfs::{self, ReadResult, Volume, REASON_DATA, REASON_FILE_CREATE, REASON_FILE_DELETE, REASON_RENAME_NEW_NAME};
+use glint_core::access;
 use glint_core::proto::{ChildrenReply, Hit, Request, SearchReply, StatusReply, VolumeStatus};
 use glint_core::{pipe, PIPE_NAME, SERVICE_NAME};
 use parking_lot::{Mutex, RwLock};
@@ -22,6 +23,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Where user profiles live (`C:\Users`), as the system sees it.
+fn profiles_dir() -> String {
+    std::env::var("PUBLIC").ok().and_then(|p| PathBuf::from(p).parent().map(|d| d.to_string_lossy().into_owned())).unwrap_or_else(|| r"C:\Users".into())
+}
 
 fn data_dir() -> PathBuf {
     let base = std::env::var_os("ProgramData").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
@@ -82,7 +88,9 @@ impl Engine {
         Arc::new(Engine { vols })
     }
 
-    fn handle(&self, line: &str) -> String {
+    fn handle(&self, line: &str, who: &pipe::Caller) -> String {
+        let profiles = profiles_dir();
+        let seen = |path: &str| access::visible(path, &profiles, who.profile.as_deref());
         let req: Request = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => return serde_json::json!({"error": format!("bad request: {e}")}).to_string(),
@@ -111,6 +119,7 @@ impl Engine {
                             });
                         }
                     }
+                    hits.retain(|h| seen(&h.path));
                     hits.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.path.len().cmp(&b.path.len())));
                     hits.truncate(query.limit.max(1));
                 }
@@ -124,13 +133,14 @@ impl Engine {
                     Some(v) => {
                         let ready = v.status.lock().meta_ready;
                         let idx = v.index.read();
-                        match idx.find_dir(&path) {
+                        match idx.find_dir(&path).filter(|_| seen(&path)) {
                             None => reply.error = Some("Folder not found".into()),
                             Some(d) => {
                                 let (total, kids) = idx.children_by_size(d, if limit == 0 { 0 } else { limit.min(500) });
                                 reply.total = ready.then_some(total);
                                 reply.items = kids
                                     .into_iter()
+                                    .filter(|(i, _)| seen(&idx.path(*i)))
                                     .map(|(i, s)| {
                                         let (m, _) = idx.meta(i);
                                         Hit { path: idx.path(i), dir: idx.is_dir(i), score: 0, mtime: (m != 0).then_some(m), size: ready.then_some(s) }
@@ -321,7 +331,7 @@ fn scan_and_follow(v: &Arc<Vol>, stop: &Arc<AtomicBool>) -> Result<(), String> {
 fn run(stop: Arc<AtomicBool>) {
     let engine = Engine::start(stop.clone());
     let e2 = engine.clone();
-    let handler: Arc<dyn Fn(&str) -> String + Send + Sync> = Arc::new(move |line| e2.handle(line));
+    let handler: pipe::Handler = Arc::new(move |line, who| e2.handle(line, who));
     if let Err(e) = pipe::serve(PIPE_NAME, handler, stop) {
         log(&format!("pipe server failed: {e}"));
     }

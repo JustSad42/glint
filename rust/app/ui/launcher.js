@@ -19,6 +19,15 @@ const FILTERS = [
 const tabs = () => FILTERS.filter((f) => f.id !== 'clipboard' || (S.settings.clipvault !== false && S.status?.clipvault));
 const fileSrc = (p) => window.__TAURI__.core.convertFileSrc(p);
 
+// Pictures that fail to load (`data-err`). One listener: the page's rules forbid inline handlers.
+document.addEventListener('error', (e) => {
+  const el = e.target, how = el.dataset?.err;
+  if (!how) return;
+  if (how === 'cover') el.parentElement.classList.add('none');
+  if (how === 'glyph') { el.parentElement.classList.add('glyphy'); el.outerHTML = glyph(el.dataset.glyph, 32); return; }
+  el.remove();
+}, true);
+
 const S = {
   settings: {},
   filter: 'all',
@@ -200,7 +209,7 @@ async function qlRender(it) {
     let d = null;
     try { d = await call('details', { item: it }); } catch {}
     const kids = d?.children?.length ? `<div class="ql-kids">${d.children.map((c) => `<div>${glyph(c.dir ? 'folder' : 'file', 15)}${esc(c.name)}</div>`).join('')}</div>` : '';
-    const big = d?.thumb ? `<img class="ql-thumb" src="${esc(d.thumb)}" onerror="this.remove()" />` : `<div class="ql-ico">${it.icon ? `<img src="${esc(it.icon)}" />` : glyph(KIND_GLYPH[it.kind] || 'file', 56)}</div>`;
+    const big = d?.thumb ? `<img class="ql-thumb" src="${esc(d.thumb)}" data-err="remove" />` : `<div class="ql-ico">${it.icon ? `<img src="${esc(it.icon)}" />` : glyph(KIND_GLYPH[it.kind] || 'file', 56)}</div>`;
     const facts = d ? [d.is_dir === false ? fact('Size', fmtSize(d.size)) : d.total ? fact('Size', fmtSize(d.total)) : '', fact('Modified', fmtDate(d.modified)), fact('Opens with', d.opens_with), fact('Where', d.pretty)].join('') : '';
     body = `<div class="ql-info">${big}<div class="pv-name">${esc(it.title)}</div><div class="pv-facts">${facts}</div>${d?.text ? `<pre class="ql-text small">${esc(d.text)}</pre>` : ''}${kids}</div>`;
   }
@@ -323,7 +332,7 @@ function goLabel(it) {
 
 function mediaCardHtml(it, i) {
   return `<div class="row media-card ${i === S.sel ? 'sel' : ''}" data-i="${i}">
-    <div class="cover"><img src="${esc(it.icon)}" onerror="this.parentElement.classList.add('none');this.remove()" />${glyph('play', 20)}</div>
+    <div class="cover"><img src="${esc(it.icon)}" data-err="cover" />${glyph('play', 20)}</div>
     <div class="txt"><div class="title">${esc(it.title)}</div><div class="sub">${esc(it.subtitle)}</div>
       <div class="eq ${it.playing ? 'on' : ''}"><i></i><i></i><i></i><i></i></div></div>
     <div class="mc-btns">
@@ -502,7 +511,7 @@ function markText(text, marks) {
 
 function mediaHero(d) {
   const src = fileSrc(d.path);
-  if (d.media === 'image') return `<img class="pv-media" src="${esc(src)}" data-dims="1" onerror="this.remove()" />`;
+  if (d.media === 'image') return `<img class="pv-media" src="${esc(src)}" data-dims="1" data-err="remove" />`;
   if (d.media === 'video') return `<video class="pv-media" src="${esc(src)}" controls muted preload="metadata" data-dims="1"></video>`;
   if (d.media === 'audio') return `<div class="pv-audio"><div class="pv-ico glyphy">${glyph('volume', 30)}</div><audio src="${esc(src)}" controls preload="metadata" data-dims="1"></audio></div>`;
   return '';
@@ -523,19 +532,19 @@ function renderPreview(it, d) {
   const acts = actionsFor(it, d).slice(0, 5);
   let hero;
   if (it.kind === 'clip') {
-    const img = it.image ? `<img class="pv-media" src="${esc(fileSrc(it.image))}" data-dims="1" onerror="this.remove()" />` : '';
+    const img = it.image ? `<img class="pv-media" src="${esc(fileSrc(it.image))}" data-dims="1" data-err="remove" />` : '';
     hero = `${img}<div class="pv-kind">${esc(it.subtitle)}</div>`;
     if (it.clipkind !== 'Image' && it.text) hero += `<div class="pv-text clip">${esc(it.text)}</div>`;
     hero += img ? `<div class="pv-facts"><div class="pv-fact" data-fact="dims" hidden><span>Size</span><span></span></div></div>` : '';
   } else if (it.key === 'media:now') {
-    hero = `<div class="pv-hero"><div class="pv-cover"><img src="${esc(it.icon)}" onerror="this.parentElement.classList.add('none');this.remove()" />${glyph('play', 36)}</div><div class="pv-name">${esc(it.title)}</div><div class="pv-kind">${esc(it.subtitle)}</div></div>`;
+    hero = `<div class="pv-hero"><div class="pv-cover"><img src="${esc(it.icon)}" data-err="cover" />${glyph('play', 36)}</div><div class="pv-name">${esc(it.title)}</div><div class="pv-kind">${esc(it.subtitle)}</div></div>`;
   } else if (it.kind === 'calc') {
     hero = `<div class="pv-calc">${esc(it.title)}</div><div class="pv-kind" style="text-align:center">${esc(it.subtitle)}</div>`;
   } else if (it.kind === 'color') {
     hero = `<div class="pv-swatch" style="background:${esc(it.swatch)}"></div><div class="pv-name">${esc(it.title)}</div><div class="pv-facts">${(it.alts || []).map((a, i) => fact(['Hex', 'RGB', 'HSL'][i], a)).join('')}</div>`;
   } else {
-    const big = d?.media ? mediaHero(d) : d?.thumb ? `<img class="pv-thumb" src="${esc(d.thumb)}" onerror="this.remove()" />` : '';
-    const ico = it.icon ? `<div class="pv-ico"><img src="${esc(it.icon)}" onerror="this.parentElement.classList.add('glyphy');this.outerHTML=glyph('${KIND_GLYPH[it.kind] || 'file'}',32)" /></div>`
+    const big = d?.media ? mediaHero(d) : d?.thumb ? `<img class="pv-thumb" src="${esc(d.thumb)}" data-err="remove" />` : '';
+    const ico = it.icon ? `<div class="pv-ico"><img src="${esc(it.icon)}" data-err="glyph" data-glyph="${KIND_GLYPH[it.kind] || 'file'}" /></div>`
       : `<div class="pv-ico glyphy">${glyph(it.glyph || KIND_GLYPH[it.kind] || 'sparkle', 30)}</div>`;
     const kindName = { app: 'Application', file: 'File', folder: 'Folder', content: 'Text match', window: 'Open window', process: 'Running process', action: 'Command', web: 'Web search', url: 'Website', command: 'PowerShell command' }[it.kind] || '';
     hero = `<div class="pv-hero">${big || ico}<div class="pv-name">${esc(it.title)}</div><div class="pv-kind">${esc(kindName)}</div></div>`;
